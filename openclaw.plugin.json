@@ -1,0 +1,20 @@
+{
+  "id": "agenda-clo",
+  "name": "AgendaClo",
+  "description": "Per-project task/todo lists for OpenClaw (project = agent).",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "storePath": { "type": "string" }
+    }
+  },
+  "uiHints": {
+    "storePath": {
+      "label": "Task store path",
+      "advanced": true,
+      "placeholder": "~/.openclaw/agenda-clo/tasks.json"
+    }
+  }
+}
