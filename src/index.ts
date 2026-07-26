@@ -1,20 +1,19 @@
 import os from "node:os";
 import path from "node:path";
-import { Type } from "typebox";
-import { defineToolPlugin } from "openclaw/plugin-sdk/tool-plugin";
-import { createTaskTool, TASK_TOOL_DESCRIPTION, TaskParamsSchema } from "./task-tool.js";
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { createMiniAppRoutes } from "./board.js";
+import { createTaskTool } from "./task-tool.js";
 import { TaskStore } from "./store.js";
 
-const configSchema = Type.Object(
-  {
-    storePath: Type.Optional(
-      Type.String({ description: "Where tasks.json lives. Defaults to the plugin state dir." }),
-    ),
-  },
-  { additionalProperties: false },
-);
+// Config is validated by the loader against openclaw.plugin.json's configSchema.
+const BASE_PATH = "/plugins/agenda-clo";
 
-// Minimal shapes we touch on the plugin api (avoids a deep openclaw import).
+interface AgendaConfig {
+  storePath?: string;
+  webProject?: string;
+  ownerIds?: number[];
+}
+
 interface StateRuntime {
   state?: { resolveStateDir?: (name?: string) => string };
 }
@@ -23,12 +22,9 @@ interface PluginApiLike {
   runtime?: StateRuntime;
 }
 
-function resolveStorePath(api: PluginApiLike, config: { storePath?: string }): string {
-  const configured = config.storePath?.trim();
+function resolveStorePath(api: PluginApiLike, cfg: AgendaConfig): string {
+  const configured = cfg.storePath?.trim();
   if (configured) return api.resolvePath ? api.resolvePath(configured) : configured;
-  // Resolve the gateway state dir if available, else ~/.openclaw. Always write to
-  // an "agenda-clo/" subdir so we never drop a bare tasks.json into the state root
-  // (which could collide with core features such as TaskFlows).
   let base: string | undefined;
   try {
     const d = api.runtime?.state?.resolveStateDir?.();
@@ -40,25 +36,38 @@ function resolveStorePath(api: PluginApiLike, config: { storePath?: string }): s
   return path.join(base, "agenda-clo", "tasks.json");
 }
 
-export default defineToolPlugin({
+function readBotToken(api: unknown): string | undefined {
+  const cfg = (api as { config?: { channels?: { telegram?: { botToken?: string } } } }).config;
+  const t = cfg?.channels?.telegram?.botToken;
+  return typeof t === "string" && t.trim() ? t.trim() : undefined;
+}
+
+export default definePluginEntry({
   id: "agenda-clo",
   name: "AgendaClo",
-  description: "Per-project task/todo lists for OpenClaw (project = agent).",
-  configSchema,
-  tools: (tool) => [
-    tool({
-      name: "task",
-      label: "Task",
-      // Static description for the manifest; the runtime tool refines it with the project id.
-      description: TASK_TOOL_DESCRIPTION("<current project>"),
-      parameters: TaskParamsSchema,
-      // Factory: we need the runtime tool context to scope tasks to the current
-      // project (agentId). Returns a concrete tool bound to that project.
-      factory: ({ api, config, toolContext }) => {
-        const agentId = toolContext.agentId ?? "main";
-        const store = new TaskStore(resolveStorePath(api as PluginApiLike, config));
-        return createTaskTool({ agentId, store });
-      },
-    }),
-  ],
+  description: "Per-project task/todo lists for OpenClaw (project = agent), with a Telegram Mini App board.",
+  register(api) {
+    const cfg = ((api as { pluginConfig?: AgendaConfig }).pluginConfig ?? {}) as AgendaConfig;
+    const store = new TaskStore(resolveStorePath(api as PluginApiLike, cfg));
+    const project = cfg.webProject?.trim() || "main";
+
+    // Agent tool — factory form so the tool binds to the runtime project (agentId).
+    api.registerTool((ctx: { agentId?: string }) =>
+      createTaskTool({ agentId: ctx.agentId ?? "main", store }),
+    );
+
+    // Telegram Mini App: page + tasks API under /plugins/agenda-clo/*.
+    const routes = createMiniAppRoutes({
+      store,
+      project,
+      ownerIds: cfg.ownerIds,
+      basePath: BASE_PATH,
+      getBotToken: () => readBotToken(api),
+    });
+    for (const route of routes) {
+      api.registerHttpRoute(route);
+    }
+
+    api.logger?.info?.(`[agenda-clo] task tool + Mini App at ${BASE_PATH}/app`);
+  },
 });

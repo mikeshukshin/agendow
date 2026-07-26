@@ -1,7 +1,7 @@
 {
   "id": "agenda-clo",
   "name": "AgendaClo",
-  "description": "Per-project task/todo lists for OpenClaw (project = agent).",
+  "description": "Per-project task/todo lists for OpenClaw (project = agent), with a Telegram Mini App board.",
   "version": "0.1.0",
   "configSchema": {
     "type": "object",
@@ -9,6 +9,15 @@
       "storePath": {
         "type": "string",
         "description": "Where tasks.json lives. Defaults to the plugin state dir."
+      },
+      "webProject": {
+        "type": "string",
+        "description": "Which project (agent id) the Mini App manages. Default: main."
+      },
+      "ownerIds": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "Telegram user ids allowed to use the Mini App. Empty = any valid Telegram user of this bot."
       }
     },
     "additionalProperties": false
@@ -17,8 +26,6 @@
     "onStartup": true
   },
   "contracts": {
-    "tools": [
-      "task"
-    ]
+    "tools": ["task"]
   }
 }

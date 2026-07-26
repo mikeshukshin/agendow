@@ -1,83 +1,108 @@
 # AgendaClo
 
-An OpenClaw plugin that gives every **project** its own to-do list.
+An OpenClaw plugin that gives every **project** its own to-do list — usable both
+by the agent (a `task` tool) and by you (a **Telegram Mini App** board).
 
 In OpenClaw a project *is* an agent — each agent already owns its own workspace,
-sessions, crons, memory and model. AgendaClo adds the one missing primitive:
-per-project **tasks**. Tasks are automatically scoped to the current agent, so a
-task created while working in project A is invisible to project B.
+sessions, crons, memory and model. AgendaClo adds the missing primitive:
+per-project **tasks**, automatically scoped to the current agent. The agent
+manages them via a tool; you view/manage the same tasks in a Telegram Mini App.
 
-Built as a **tool plugin** on the modern OpenClaw SDK (`defineToolPlugin`), so
-`openclaw plugins build` writes the tool metadata into the manifest and the
-agent sees the `task` tool without OpenClaw loading plugin code first.
+Built on the full plugin SDK (`definePluginEntry`, requires `openclaw >= 2026.5.17`).
 
-Requires `openclaw >= 2026.5.17`.
+## Two surfaces, one store
 
-## The `task` tool
+- **`task` agent tool** — `add | list | update | done | remove`, scoped to the
+  current project (`ctx.agentId`). The bot calls it from natural language.
+- **Telegram Mini App** — a web board served by the plugin under
+  `/plugins/agenda-clo/*`, authenticated with Telegram `initData`.
 
-The agent gets one tool, `task`, with an `action`:
-
-| action   | requires | does                                                             |
-| -------- | -------- | ---------------------------------------------------------------- |
-| `add`    | `title`  | create a task (optional `notes`)                                 |
-| `list`   | —        | list this project's tasks (optional `status`) + summary counts   |
-| `update` | `id`     | change `title` / `notes` / `status`                              |
-| `done`   | `id`     | mark done                                                        |
-| `remove` | `id`     | delete                                                           |
-
-`status` is one of `todo | doing | done`. Every call is scoped to the current
-project (`ctx.agentId`); cross-project reads/writes are refused by the store.
-
-## Develop
-
-```bash
-npm install
-npm run plugin:build      # tsc -> dist/, then `openclaw plugins build` writes the manifest
-npm run plugin:validate   # `openclaw plugins validate`
-npm test                  # vitest: store + tool + metadata
-```
-
-`npm run plugin:build` regenerates `openclaw.plugin.json` — rerun it after
-changing the plugin id, name, description, config schema, or tool names.
-
-## Install (dev)
-
-Point OpenClaw at this repo (after `npm run plugin:build`) and restart the
-gateway:
-
-```json5
-// openclaw config
-{
-  plugins: {
-    load: { paths: ["/path/to/AgendaClo"] },
-    entries: { "agenda-clo": { enabled: true } },
-  },
-}
-```
-
-Plugins run in-process with the Gateway, which requires plugin files be owned by
-the Gateway user (e.g. `root` for a root-run gateway) — `chown` after copying.
+Both read/write the same `tasks.json`, so a task added in chat shows up in the
+Mini App and vice-versa.
 
 ## Config
 
 Under `plugins.entries.agenda-clo.config`:
 
-- `storePath` (optional) — where `tasks.json` lives. Defaults to the plugin
-  state dir, falling back to `~/.openclaw/agenda-clo/tasks.json`.
+| Key          | Default                                | Meaning                                                            |
+| ------------ | -------------------------------------- | ------------------------------------------------------------------ |
+| `storePath`  | `<stateDir>/agenda-clo/tasks.json`     | Where tasks are stored.                                            |
+| `webProject` | `main`                                 | Which project (agent id) the Mini App manages.                    |
+| `ownerIds`   | — (any valid Telegram user of the bot) | Telegram user ids allowed to use the Mini App. **Set this** if the bot's `allowFrom` includes `*`. |
+
+## Develop
+
+```bash
+npm install
+npm run build     # tsc -> dist/
+npm test          # vitest: store, task tool, initData auth, mini-app API
+```
+
+## Deploy (self-hosted gateway)
+
+1. Build: `npm run build` (produces `dist/`).
+2. Copy the plugin dir to the gateway host (e.g. `~/.openclaw/extensions/agenda-clo`)
+   with `dist/`, `openclaw.plugin.json`, `package.json`, and
+   `node_modules/typebox` (the only runtime dep; `openclaw` is a host-provided peer).
+3. **`chown` to the gateway user** (e.g. `root`) — plugins run in-process and
+   files not owned by the gateway user are blocked.
+4. Enable it:
+   ```json5
+   plugins: {
+     load: { paths: ["/root/.openclaw/extensions/agenda-clo"] },
+     entries: { "agenda-clo": { enabled: true, config: { ownerIds: [<your-tg-id>] } } },
+   }
+   ```
+5. `openclaw gateway restart`.
+
+## Expose the Mini App (public HTTPS)
+
+Telegram Mini Apps need a public HTTPS URL, but the gateway is loopback-only.
+Front it with a tunnel/proxy that exposes **only** `/plugins/agenda-clo/*`
+(keep the Control UI private). Reference setup with a Cloudflare Tunnel:
+
+```yaml
+# /etc/cloudflared/config.yml
+tunnel: <tunnel-id>
+credentials-file: /root/.cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: agenda.example.com
+    path: ^/plugins/agenda-clo(/.*)?$
+    service: http://localhost:18789
+  - service: http_status:404
+```
+
+No inbound ports are opened (cloudflared dials out); Cloudflare terminates TLS.
+
+## Launch button in Telegram
+
+Set a **per-chat** Web App menu button for each owner (per-chat avoids clashing
+with OpenClaw's default commands menu):
+
+```
+POST https://api.telegram.org/bot<token>/setChatMenuButton
+{ "chat_id": <owner-id>,
+  "menu_button": { "type": "web_app", "text": "Tasks",
+    "web_app": { "url": "https://agenda.example.com/plugins/agenda-clo/app" } } }
+```
+
+The owner opens the bot → taps the button → the Mini App opens with `initData`,
+which the plugin validates (HMAC over the bot token) and checks against `ownerIds`.
 
 ## Layout
 
-- `src/store.ts` — pure, dependency-free task store (persistence, project scoping, status). All real logic lives here.
-- `src/task-tool.ts` — builds the `task` agent tool (TypeBox schema + dispatch) scoped to one project.
-- `src/index.ts` — `defineToolPlugin` entry; a `factory` reads the runtime `toolContext.agentId` and binds the tool to that project.
-- `openclaw.plugin.json` — generated manifest (`contracts.tools: ["task"]`).
-- `src/*.test.ts` — vitest: store behavior, tool dispatch + project isolation, and the declared tool metadata.
+- `src/store.ts` — pure, dependency-free task store (persist, project scope, status).
+- `src/task-tool.ts` — the `task` agent tool.
+- `src/board.ts` — Mini App page (Telegram WebApp SDK) + tasks JSON API.
+- `src/telegram-auth.ts` — Telegram `initData` HMAC validation.
+- `src/index.ts` — `definePluginEntry`: registers the tool + the HTTP routes.
+- `openclaw.plugin.json` — manifest (`contracts.tools: ["task"]`).
+- `src/*.test.ts` — vitest.
 
-## Roadmap
+## Security notes
 
-- **Board / summary** — a per-project view of tasks + status. On this OpenClaw
-  version the bundled **Workboard** plugin already provides a Control-UI Kanban
-  board (`openclaw plugins enable workboard`); a custom board (if wanted) would
-  be a separate full-SDK plugin, since a tool plugin can't serve HTTP routes.
-- **Model / subscription per project** — configured natively via each agent's
-  `model` + `auth.order`; not part of this plugin.
+- The Mini App API requires valid Telegram `initData` (only real users of *this*
+  bot can produce it) and, when set, an `ownerIds` allowlist.
+- Serving `/plugins/agenda-clo/*` (not `/agenda`) matters: the gateway routes
+  `/plugins/*` to plugins, while other GET paths fall through to the Control UI.
+- Expose only the plugin path publicly; never the whole gateway.
