@@ -7,7 +7,16 @@
     "additionalProperties": false,
     "properties": {
       "enabled": { "type": "boolean" },
-      "storePath": { "type": "string" }
+      "storePath": { "type": "string" },
+      "board": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "path": { "type": "string" },
+          "token": { "type": "string" }
+        }
+      }
     }
   },
   "uiHints": {
@@ -15,6 +24,13 @@
       "label": "Task store path",
       "advanced": true,
       "placeholder": "~/.openclaw/agenda-clo/tasks.json"
+    },
+    "board.enabled": { "label": "Enable board" },
+    "board.path": { "label": "Board path", "placeholder": "/agenda" },
+    "board.token": {
+      "label": "Board token",
+      "help": "If set, the board requires this token (?token=) and becomes editable. If empty, the board is read-only.",
+      "sensitive": true
     }
   }
 }

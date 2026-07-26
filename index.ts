@@ -1,11 +1,16 @@
 import os from "node:os";
 import path from "node:path";
+import { createBoardRoutes } from "./board.js";
 import type { PluginApi } from "./openclaw-types.js";
 import { createTaskTool } from "./task-tool.js";
 import { TaskStore } from "./store.js";
 
-function resolveStorePath(api: PluginApi): string {
-  const cfg = (api.pluginConfig ?? {}) as { storePath?: string };
+interface AgendaConfig {
+  storePath?: string;
+  board?: { enabled?: boolean; path?: string; token?: string };
+}
+
+function resolveStorePath(api: PluginApi, cfg: AgendaConfig): string {
   if (typeof cfg.storePath === "string" && cfg.storePath.trim()) {
     return api.resolvePath(cfg.storePath.trim());
   }
@@ -25,11 +30,27 @@ const plugin = {
   name: "AgendaClo",
   description: "Per-project task/todo lists for OpenClaw (project = agent).",
   register(api: PluginApi) {
-    const store = new TaskStore(resolveStorePath(api));
-    // Factory form: `ctx.agentId` is the current project, so each run's tool is scoped to it.
+    const cfg = (api.pluginConfig ?? {}) as AgendaConfig;
+    const store = new TaskStore(resolveStorePath(api, cfg));
+
+    // Agent tool — factory form: `ctx.agentId` is the current project.
     api.registerTool((ctx) => createTaskTool({ agentId: ctx.agentId ?? "main", store }), {
       optional: true,
     });
+
+    // Project board (the alternative interface besides chat).
+    const board = cfg.board ?? {};
+    if (board.enabled !== false) {
+      const boardPath = (board.path ?? "/agenda").trim() || "/agenda";
+      const token = typeof board.token === "string" && board.token.trim() ? board.token.trim() : undefined;
+      for (const route of createBoardRoutes({ store, path: boardPath, token })) {
+        api.registerHttpRoute(route);
+      }
+      api.logger.info?.(
+        `[agenda-clo] board at ${boardPath}${token ? " (token-protected)" : " (read-only)"}`,
+      );
+    }
+
     api.logger.info?.("[agenda-clo] task tool registered");
   },
 };

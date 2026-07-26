@@ -134,6 +134,12 @@ export class TaskStore {
     const count = (s: TaskStatus) => tasks.filter((t) => t.status === s).length;
     return { total: tasks.length, todo: count("todo"), doing: count("doing"), done: count("done") };
   }
+
+  // Cross-project view for the board: every project (agentId) that has tasks.
+  projects(): Array<{ agentId: string; summary: ReturnType<TaskStore["summary"]> }> {
+    const ids = [...new Set(this.read().tasks.map((t) => t.agentId))].sort();
+    return ids.map((agentId) => ({ agentId, summary: this.summary(agentId) }));
+  }
 }
 
 // --- self-check (runs with: `node store.ts`) -------------------------------
@@ -150,6 +156,14 @@ function demo(): void {
   // project isolation
   assert.equal(store.list({ agentId: "proj-a" }).length, 2);
   assert.equal(store.list({ agentId: "proj-b" }).length, 1);
+
+  // cross-project listing for the board
+  const projects = store.projects();
+  assert.deepEqual(
+    projects.map((p) => p.agentId),
+    ["proj-a", "proj-b"],
+  );
+  assert.equal(projects.find((p) => p.agentId === "proj-a")?.summary.total, 2);
 
   // done -> status + doneAt + summary
   const done = store.update({ agentId: "proj-a", id: a.id, patch: { status: "done" } });

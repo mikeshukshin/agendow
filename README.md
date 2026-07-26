@@ -9,9 +9,11 @@ task created while working in project A is invisible to project B.
 
 ## Status
 
-Phase 1 (this repo): the `task` tool + a persisted, project-scoped store.
-Next: a self-served project board via `api.registerHttpRoute` (the "alternative
-interface besides chat"), and a scheduled summary cron. See the roadmap below.
+- **Phase 1** — the `task` tool + a persisted, project-scoped store.
+- **Phase 2** — a self-served project **board** (HTML + JSON) on the gateway
+  port via `api.registerHttpRoute`: the "alternative interface besides chat".
+
+Next: an on-demand / scheduled project summary. See the roadmap below.
 
 ## The `task` tool
 
@@ -27,6 +29,27 @@ The agent gets one tool, `task`, with an `action`:
 
 `status` is one of `todo | doing | done`. Every call is scoped to the current
 project; cross-project reads/writes are refused by the store.
+
+## The board
+
+A single-page board served on the gateway's own HTTP port — no separate app, no
+core UI fork. It shows every project (agent) that has tasks, grouped with
+todo/doing/done counts, and lets you add / complete / remove tasks.
+
+- Page: `GET <board.path>` (default `/agenda`)
+- JSON API: `GET <board.path>/tasks[?project=<id>]`, and `POST` with a body
+  `{ op: "add"|"update"|"done"|"remove", project, id?, title?, notes?, status? }`
+
+**Auth (important — plugin HTTP routes have no gateway auth in front of them):**
+
+- **No `board.token` set → the board is read-only.** `GET` works; every mutation
+  returns `403`. Task titles are visible to anyone who can reach the port.
+- **`board.token` set → the board is private and editable.** Every request must
+  present the token via `?token=<t>` or an `x-agenda-token` header (compared with
+  `timingSafeEqual`). Open it as `http://<gateway>/agenda?token=<t>`.
+
+Since the gateway can be exposed (e.g. on a VPS), set a `board.token` if the port
+is reachable by anyone but you, or set `board.enabled: false` to turn it off.
 
 ## Install (dev)
 
@@ -57,6 +80,21 @@ Under `plugins.entries.agenda-clo.config`:
 
 - `storePath` (optional) — where `tasks.json` lives. Defaults to the plugin
   state dir, falling back to `~/.openclaw/agenda-clo/tasks.json`.
+- `board.enabled` (optional, default `true`) — serve the board.
+- `board.path` (optional, default `/agenda`) — the URL path for the board.
+- `board.token` (optional) — shared secret. Unset = read-only board; set =
+  private, editable board (token required on every request).
+
+```json5
+plugins: {
+  entries: {
+    "agenda-clo": {
+      enabled: true,
+      config: { board: { path: "/agenda", token: "change-me" } },
+    },
+  },
+}
+```
 
 ## Develop
 
@@ -76,12 +114,13 @@ pnpm typecheck       # optional, needs @types/node
 
 - `store.ts` — pure, dependency-free task store (persistence, project scoping, status). Self-checks on `node store.ts`.
 - `task-tool.ts` — the `task` agent tool (TypeBox schema + dispatch).
-- `index.ts` — plugin entry: builds the store, registers the tool scoped to `ctx.agentId`.
+- `board.ts` — the project board: two exact gateway routes (page + JSON API) with token auth.
+- `index.ts` — plugin entry: builds the store, registers the tool scoped to `ctx.agentId`, and the board routes.
 - `openclaw-types.ts` — minimal local subset of `openclaw/plugin-sdk` (no build coupling).
 - `openclaw.plugin.json` — manifest (id + config schema).
+- `smoke.mjs` — tool + board checks, loaded through jiti (the gateway's loader).
 
 ## Roadmap
 
-- **Board UI** — serve a project board (HTML/JSON) via `api.registerHttpRoute`; no core UI fork.
-- **Status / summary** — a read-model over tasks + crons, and an on-demand or scheduled summary.
+- **Status / summary** — a read-model over tasks + crons, and an on-demand or scheduled summary (cron `agentTurn` over `task list`).
 - **RPC** — `task.*` gateway methods for the Control UI / other operators (note: plugin RPC requires an `operator.admin`-scoped client).
