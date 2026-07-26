@@ -5,20 +5,31 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "test": "node store.ts && node smoke.mjs",
-    "smoke": "node smoke.mjs",
-    "typecheck": "tsc --noEmit"
+    "build": "tsc -p tsconfig.json",
+    "plugin:build": "npm run build && openclaw plugins build --entry ./dist/index.js",
+    "plugin:validate": "npm run build && openclaw plugins validate --entry ./dist/index.js",
+    "test": "vitest run --config ./vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
   },
   "dependencies": {
-    "@sinclair/typebox": "^0.34.48"
+    "typebox": "^1.1.38"
   },
   "devDependencies": {
-    "@types/node": "^22",
-    "jiti": "^2.7.0"
+    "openclaw": "latest",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
   },
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.js"
     ]
   }
 }

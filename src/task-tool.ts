@@ -1,17 +1,42 @@
-import { Type } from "@sinclair/typebox";
-import type { AgentTool, AgentToolResult } from "./openclaw-types.js";
+import { Type, type TSchema } from "typebox";
 import { TaskStore, type TaskStatus } from "./store.js";
 
-const literalEnum = (values: readonly string[]) =>
-  Type.Union(values.map((v) => Type.Literal(v)));
+// Local structural shape of a core agent tool (what a tool-plugin `factory`
+// returns). Kept local so this file has no deep openclaw import; it is
+// structurally compatible with the SDK's AnyAgentTool.
+export interface AgentToolResult {
+  content: Array<{ type: "text"; text: string }>;
+  details: unknown; // required to match the SDK's AgentToolResult<unknown>
+}
+export interface AgentTool {
+  name: string;
+  label: string; // required to match the SDK's AnyAgentTool
+  description: string;
+  parameters: TSchema;
+  execute: (toolCallId: string, params: Record<string, unknown>) => Promise<AgentToolResult>;
+}
 
-const TaskToolSchema = Type.Object({
+const literalEnum = (values: readonly string[]) => Type.Union(values.map((v) => Type.Literal(v)));
+
+// Shared TypeBox schema — used both for static manifest metadata (in index.ts)
+// and for the runtime tool's `parameters`.
+export const TaskParamsSchema = Type.Object({
   action: literalEnum(["add", "list", "update", "done", "remove"]),
   id: Type.Optional(Type.String({ description: "Task id (for update/done/remove)" })),
   title: Type.Optional(Type.String({ description: "Task title (for add/update)" })),
   notes: Type.Optional(Type.String({ description: "Freeform notes (for add/update)" })),
   status: Type.Optional(literalEnum(["todo", "doing", "done"])),
 });
+
+export const TASK_TOOL_DESCRIPTION = (agentId: string) =>
+  `Per-project to-do list. Tasks are automatically scoped to the current project (agent "${agentId}") — you only ever see and change this project's tasks.
+
+ACTIONS (set "action"):
+- add: create a task. Requires "title". Optional "notes".
+- list: list this project's tasks. Optional "status" filter (todo|doing|done). Returns tasks + summary counts.
+- update: modify a task. Requires "id". Optional "title", "notes", "status".
+- done: mark a task done. Requires "id".
+- remove: delete a task. Requires "id".`;
 
 function jsonResult(payload: unknown): AgentToolResult {
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], details: payload };
@@ -30,16 +55,11 @@ export function createTaskTool(opts: { agentId: string; store: TaskStore }): Age
   return {
     name: "task",
     label: "Task",
-    description: `Per-project to-do list. Tasks are automatically scoped to the current project (agent "${agentId}") — you only ever see and change this project's tasks.
-
-ACTIONS (set "action"):
-- add: create a task. Requires "title". Optional "notes".
-- list: list this project's tasks. Optional "status" filter (todo|doing|done). Returns tasks + summary counts.
-- update: modify a task. Requires "id". Optional "title", "notes", "status".
-- done: mark a task done. Requires "id".
-- remove: delete a task. Requires "id".`,
-    parameters: TaskToolSchema,
-    execute(_toolCallId, params) {
+    description: TASK_TOOL_DESCRIPTION(agentId),
+    parameters: TaskParamsSchema,
+    // async so the return type is always Promise<AgentToolResult> (SDK requirement),
+    // even though the store operations are synchronous.
+    async execute(_toolCallId, params) {
       const p = (params ?? {}) as Record<string, unknown>;
       const action = str(p.action);
       try {
@@ -51,8 +71,11 @@ ACTIONS (set "action"):
           }
           case "list": {
             const status = validStatus(p.status);
-            const tasks = store.list({ agentId, status });
-            return jsonResult({ project: agentId, summary: store.summary(agentId), tasks });
+            return jsonResult({
+              project: agentId,
+              summary: store.summary(agentId),
+              tasks: store.list({ agentId, status }),
+            });
           }
           case "update": {
             const id = str(p.id);

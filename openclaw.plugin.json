@@ -2,35 +2,23 @@
   "id": "agenda-clo",
   "name": "AgendaClo",
   "description": "Per-project task/todo lists for OpenClaw (project = agent).",
+  "version": "0.1.0",
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
     "properties": {
-      "enabled": { "type": "boolean" },
-      "storePath": { "type": "string" },
-      "board": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "enabled": { "type": "boolean" },
-          "path": { "type": "string" },
-          "token": { "type": "string" }
-        }
+      "storePath": {
+        "type": "string",
+        "description": "Where tasks.json lives. Defaults to the plugin state dir."
       }
-    }
-  },
-  "uiHints": {
-    "storePath": {
-      "label": "Task store path",
-      "advanced": true,
-      "placeholder": "~/.openclaw/agenda-clo/tasks.json"
     },
-    "board.enabled": { "label": "Enable board" },
-    "board.path": { "label": "Board path", "placeholder": "/agenda" },
-    "board.token": {
-      "label": "Board token",
-      "help": "If set, the board requires this token (?token=) and becomes editable. If empty, the board is read-only.",
-      "sensitive": true
-    }
+    "additionalProperties": false
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "task"
+    ]
   }
 }
