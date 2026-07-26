@@ -26,15 +26,18 @@ interface PluginApiLike {
 function resolveStorePath(api: PluginApiLike, config: { storePath?: string }): string {
   const configured = config.storePath?.trim();
   if (configured) return api.resolvePath ? api.resolvePath(configured) : configured;
+  // Resolve the gateway state dir if available, else ~/.openclaw. Always write to
+  // an "agenda-clo/" subdir so we never drop a bare tasks.json into the state root
+  // (which could collide with core features such as TaskFlows).
   let base: string | undefined;
   try {
-    const d = api.runtime?.state?.resolveStateDir?.("agenda-clo");
+    const d = api.runtime?.state?.resolveStateDir?.();
     if (typeof d === "string" && d.trim()) base = d;
   } catch {
     // fall back to home
   }
-  if (!base) base = path.join(os.homedir(), ".openclaw", "agenda-clo");
-  return path.join(base, "tasks.json");
+  if (!base) base = path.join(os.homedir(), ".openclaw");
+  return path.join(base, "agenda-clo", "tasks.json");
 }
 
 export default defineToolPlugin({
