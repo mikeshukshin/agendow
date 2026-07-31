@@ -47,34 +47,32 @@ function setup(ownerIds?: number[]) {
 
 describe("mini app API", () => {
   it("requires valid initData and enforces the owner allowlist", async () => {
-    const open = setup();
-    expect((await open.call("/tasks", "GET")).status).toBe(401);
-    const gated = setup([999]);
-    expect((await gated.call("/tasks", "GET", { init: initData(7) })).status).toBe(403);
+    expect((await setup().call("/projects", "GET")).status).toBe(401);
+    expect((await setup([999]).call("/projects", "GET", { init: initData(7) })).status).toBe(403);
   });
 
-  it("isolates each user's projects and tasks", async () => {
+  it("edits status + info for the authenticated user", async () => {
+    const { call } = setup();
+    const init = initData(7);
+    const created = await call("/projects", "POST", { init, body: { op: "create", name: "Cancore" } });
+    expect(created.status).toBe(200);
+    await call("/projects", "POST", { init, body: { op: "update", project: created.json.id, status: "Active", info: "notes here" } });
+    const ov = await call("/projects", "GET", { init });
+    const p = ov.json.projects.find((x: any) => x.id === created.json.id);
+    expect(p.status).toBe("Active");
+    expect(p.info).toBe("notes here");
+  });
+
+  it("isolates users and shares shared projects", async () => {
     const { call } = setup();
     const a = initData(7);
     const b = initData(8);
-    await call("/projects", "POST", { init: a, body: { op: "create", name: "Groceries" } });
-
+    const mine = await call("/projects", "POST", { init: a, body: { op: "create", name: "Mine" } });
     const bOv = await call("/projects", "GET", { init: b });
-    expect(bOv.json.projects.some((p: any) => p.name === "Groceries")).toBe(false); // B can't see A's project
-    const bAdd = await call("/tasks", "POST", { init: b, body: { op: "add", title: "b only" } });
-    expect(bAdd.status).toBe(200);
-    const aList = await call("/tasks", "GET", { init: a });
-    expect(aList.json.tasks.some((t: any) => t.title === "b only")).toBe(false); // isolated
-  });
-
-  it("shares a shared project across users", async () => {
-    const { call } = setup();
-    const a = initData(7);
-    const b = initData(8);
-    const created = await call("/projects", "POST", { init: a, body: { op: "create", name: "Team", shared: true } });
-    expect(created.json.ownerId).toBe("shared");
-    const bOv = await call("/projects", "GET", { init: b });
-    expect(bOv.json.projects.some((p: any) => p.id === created.json.id && p.shared)).toBe(true);
+    expect(bOv.json.projects.some((p: any) => p.id === mine.json.id)).toBe(false);
+    const team = await call("/projects", "POST", { init: a, body: { op: "create", name: "Team", shared: true } });
+    const bOv2 = await call("/projects", "GET", { init: b });
+    expect(bOv2.json.projects.some((p: any) => p.id === team.json.id && p.shared)).toBe(true);
   });
 
   it("serves the Mini App page", async () => {

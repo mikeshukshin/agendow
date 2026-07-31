@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { verifyInitData } from "./telegram-auth.js";
-import type { TaskStatus, TaskStore } from "./store.js";
+import type { TaskStore } from "./store.js";
 
 export interface MiniAppOptions {
   store: TaskStore;
@@ -44,9 +44,6 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
-function validStatus(v: unknown): TaskStatus | undefined {
-  return v === "todo" || v === "doing" || v === "done" ? v : undefined;
-}
 
 // Authenticate via Telegram initData; returns the Telegram user id (string) or
 // null after sending the error response.
@@ -64,65 +61,6 @@ function auth(req: IncomingMessage, url: URL, res: ServerResponse, opts: MiniApp
     return null;
   }
   return String(r.user.id);
-}
-
-async function handleTasks(req: IncomingMessage, res: ServerResponse, opts: MiniAppOptions): Promise<boolean> {
-  const url = new URL(req.url ?? "/", "http://localhost");
-  const userId = auth(req, url, res, opts);
-  if (!userId) return true;
-  const method = (req.method ?? "GET").toUpperCase();
-  const { store } = opts;
-
-  if (method === "GET") {
-    const project = str(url.searchParams.get("project")) || undefined;
-    const proj = store.getProject(userId, project ?? "");
-    return sendJson(res, 200, {
-      project: proj ? { id: proj.id, name: proj.name } : project,
-      summary: store.summary(userId, project),
-      tasks: store.list({ userId, project }),
-    });
-  }
-  if (method === "POST") {
-    let body: Record<string, unknown>;
-    try {
-      body = await readJsonBody(req);
-    } catch (err) {
-      return sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
-    }
-    const op = str(body.op);
-    const project = str(body.project) || undefined;
-    try {
-      switch (op) {
-        case "add": {
-          const title = str(body.title);
-          if (!title) return sendJson(res, 400, { error: "title required" });
-          return sendJson(res, 200, store.add({ userId, project, title, notes: str(body.notes) || undefined }));
-        }
-        case "update":
-          return sendJson(res, 200, store.update({
-            userId,
-            project,
-            id: str(body.id),
-            patch: {
-              title: str(body.title) || undefined,
-              notes: typeof body.notes === "string" ? str(body.notes) : undefined,
-              status: validStatus(body.status),
-            },
-          }));
-        case "done":
-          return sendJson(res, 200, store.update({ userId, project, id: str(body.id), patch: { status: "done" } }));
-        case "remove":
-          return sendJson(res, 200, { removed: store.remove({ userId, project, id: str(body.id) }), id: str(body.id) });
-        default:
-          return sendJson(res, 400, { error: `unknown op: ${op || "(none)"}` });
-      }
-    } catch (err) {
-      return sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-  res.statusCode = 405;
-  res.end("Method Not Allowed");
-  return true;
 }
 
 async function handleProjects(req: IncomingMessage, res: ServerResponse, opts: MiniAppOptions): Promise<boolean> {
@@ -149,11 +87,16 @@ async function handleProjects(req: IncomingMessage, res: ServerResponse, opts: M
           if (!name) return sendJson(res, 400, { error: "name required" });
           return sendJson(res, 200, store.createProject({ userId, name, shared: body.shared === true }));
         }
-        case "rename": {
-          const name = str(body.name);
-          if (!target || !name) return sendJson(res, 400, { error: "project and name required" });
-          return sendJson(res, 200, store.renameProject({ userId, idOrName: target, name }));
-        }
+        case "update":
+          return sendJson(res, 200, store.updateProject({
+            userId,
+            idOrName: target,
+            patch: {
+              name: str(body.name) || undefined,
+              status: typeof body.status === "string" ? str(body.status) : undefined,
+              info: typeof body.info === "string" ? body.info : undefined,
+            },
+          }));
         case "archive":
           if (!target) return sendJson(res, 400, { error: "project required" });
           return sendJson(res, 200, store.archiveProject({ userId, idOrName: target }));
@@ -189,14 +132,14 @@ export function createMiniAppRoutes(opts: MiniAppOptions): MiniAppRoute[] {
         return true;
       },
     },
-    { path: `${base}/tasks`, auth: "plugin", handler: (req, res) => handleTasks(req, res, opts) },
     { path: `${base}/projects`, auth: "plugin", handler: (req, res) => handleProjects(req, res, opts) },
   ];
 }
 
-// Self-contained Telegram Mini App: project switcher (yours + shared) + tasks.
+// Self-contained Telegram Mini App: project switcher (yours + shared) + a
+// status line and free-form info editor for the selected project.
 export function renderMiniAppHtml(base: string): string {
-  const cfg = JSON.stringify({ tasksPath: `${base}/tasks`, projectsPath: `${base}/projects` });
+  const cfg = JSON.stringify({ projectsPath: `${base}/projects` });
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -209,7 +152,7 @@ export function renderMiniAppHtml(base: string): string {
     --bg: var(--tg-theme-bg-color,#0f1115); --card: var(--tg-theme-secondary-bg-color,#181b22);
     --fg: var(--tg-theme-text-color,#e6e8ee); --muted: var(--tg-theme-hint-color,#8b93a7);
     --accent: var(--tg-theme-button-color,#4c8bf5); --accent-fg: var(--tg-theme-button-text-color,#fff);
-    --line: rgba(128,138,160,.25); --todo:#6b7280; --doing:#d29922; --done:#2ea043; }
+    --line: rgba(128,138,160,.25); }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system,system-ui,Segoe UI,Roboto,sans-serif; }
   header { padding:12px 14px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
@@ -217,25 +160,19 @@ export function renderMiniAppHtml(base: string): string {
   select#proj { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:9px 10px; font:inherit; }
   header button { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:9px 12px; font:inherit; cursor:pointer; }
   header button.on { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); }
-  .counts { color:var(--muted); font-size:12px; margin-top:8px; }
-  main { padding:12px 14px 92px; }
-  ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
-  li { display:flex; gap:10px; align-items:flex-start; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--card); }
-  li .dot { width:9px; height:9px; border-radius:50%; margin-top:6px; flex:0 0 auto; }
-  .s-todo .dot{background:var(--todo)} .s-doing .dot{background:var(--doing)} .s-done .dot{background:var(--done)}
-  li .body { flex:1; min-width:0; } li .title { word-break:break-word; }
-  .s-done .title { text-decoration:line-through; color:var(--muted); }
-  li .notes { color:var(--muted); font-size:13px; margin-top:2px; }
-  li button { background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:4px 10px; font:inherit; cursor:pointer; }
-  .addbar { position:fixed; left:0; right:0; bottom:0; display:flex; gap:8px; padding:12px 14px; background:var(--bg); border-top:1px solid var(--line); }
-  .addbar input { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:11px 12px; font:inherit; }
-  .addbar button { background:var(--accent); color:var(--accent-fg); border:0; border-radius:10px; padding:0 18px; font:inherit; font-weight:600; cursor:pointer; }
   .editor { display:none; gap:8px; margin-top:8px; }
   .editor.on { display:flex; }
   .editor input { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:9px 10px; font:inherit; }
   .editor button#editorSave { background:var(--accent); color:var(--accent-fg); border:0; }
-  .empty { color:var(--muted); text-align:center; padding:40px 0; }
+  main { padding:14px; display:flex; flex-direction:column; gap:10px; }
+  label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  #status { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:11px 12px; font:inherit; }
+  #info { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:11px 12px; font:inherit; min-height:200px; resize:vertical; }
+  #save { align-self:flex-start; background:var(--accent); color:var(--accent-fg); border:0; border-radius:10px; padding:11px 22px; font:inherit; font-weight:600; cursor:pointer; }
+  #save:disabled { opacity:.5; }
+  .saved { color:var(--muted); font-size:12px; align-self:center; }
   .err { color:#f85149; padding:10px 14px; font-size:13px; }
+  .empty { color:var(--muted); text-align:center; padding:40px 0; }
 </style>
 </head>
 <body>
@@ -251,21 +188,25 @@ export function renderMiniAppHtml(base: string): string {
     <button id="editorSave">Save</button>
     <button id="editorCancel">✕</button>
   </div>
-  <div class="counts" id="counts"></div>
 </header>
 <div id="err" class="err" hidden></div>
-<main id="list"><div class="empty">Loading…</div></main>
-<div class="addbar"><input id="new-task" placeholder="New task…" enterkeyhint="done" /><button id="add">Add</button></div>
+<main id="main">
+  <label for="status">Status</label>
+  <input id="status" placeholder="e.g. Active · Paused — waiting for hardware" />
+  <label for="info">Info</label>
+  <textarea id="info" placeholder="Goal, context, next steps, anything… (markdown)"></textarea>
+  <div style="display:flex; gap:10px; align-items:center;"><button id="save">Save</button><span id="savedNote" class="saved"></span></div>
+</main>
 <script>
 const CFG = ${cfg};
 const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 const INIT = (tg && tg.initData) || "";
-let CUR = null;
+let PROJECTS = [], CUR = null;
 const esc = (s) => String(s).replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-async function api(pathKey, method, body) {
-  const res = await fetch(CFG[pathKey], {
+async function api(method, body) {
+  const res = await fetch(CFG.projectsPath, {
     method,
     headers: Object.assign({ "X-Telegram-Init-Data": INIT }, body ? { "Content-Type":"application/json" } : {}),
     body: body ? JSON.stringify(body) : undefined,
@@ -277,98 +218,82 @@ async function api(pathKey, method, body) {
 function showErr(m){ const e=document.getElementById("err"); if(!m){e.hidden=true;return;} e.textContent=m; e.hidden=false; }
 function confirmAsync(msg){ return new Promise((r)=>{ if(tg&&tg.showConfirm) tg.showConfirm(msg,r); else r(window.confirm(msg)); }); }
 
-function taskRow(t){
-  const act = t.status==="done"
-    ? '<button data-op="update" data-status="todo">undo</button>'
-    : '<button data-op="done">done</button>';
-  return '<li class="s-'+t.status+'" data-id="'+esc(t.id)+'"><span class="dot"></span>'+
-    '<div class="body"><div class="title">'+esc(t.title)+'</div>'+
-    (t.notes?'<div class="notes">'+esc(t.notes)+'</div>':'')+'</div>'+act+
-    '<button data-op="remove">✕</button></li>';
+function curProject(){ return PROJECTS.find(p => p.id === CUR); }
+function fillDetail(){
+  const p = curProject();
+  document.getElementById("status").value = p ? (p.status||"") : "";
+  document.getElementById("info").value = p ? (p.info||"") : "";
+  document.getElementById("savedNote").textContent = "";
 }
-
-async function loadProjects(){
-  const ov = await api("projectsPath","GET");
-  CUR = ov.activeProjectId;
-  document.getElementById("proj").innerHTML = ov.projects.map(p =>
-    '<option value="'+esc(p.id)+'"'+(p.id===CUR?" selected":"")+'>'+(p.shared?"👥 ":"")+esc(p.name)+' ('+p.summary.total+')</option>'
+function renderSelector(){
+  document.getElementById("proj").innerHTML = PROJECTS.map(p =>
+    '<option value="'+esc(p.id)+'"'+(p.id===CUR?" selected":"")+'>'+(p.shared?"👥 ":"")+esc(p.name)+(p.status?" · "+esc(p.status):"")+'</option>'
   ).join("");
 }
-async function loadTasks(){
-  const d = await api("tasksPath","GET");
-  const s = d.summary;
-  document.getElementById("counts").textContent = s.todo+" todo · "+s.doing+" doing · "+s.done+" done";
-  const list = document.getElementById("list");
-  list.innerHTML = d.tasks.length ? '<ul>'+d.tasks.map(taskRow).join("")+'</ul>' : '<div class="empty">No tasks yet</div>';
+async function load(){
+  try{ showErr("");
+    const ov = await api("GET");
+    PROJECTS = ov.projects; CUR = ov.activeProjectId;
+    renderSelector(); fillDetail();
+  }catch(e){ showErr(e.message); }
 }
-async function refresh(){ try{ showErr(""); await loadProjects(); await loadTasks(); }catch(e){ showErr(e.message); } }
 
 document.getElementById("proj").addEventListener("change", async (e)=>{
-  try{ await api("projectsPath","POST",{op:"switch",project:e.target.value}); await refresh(); }catch(err){ showErr(err.message); }
+  CUR = e.target.value; fillDetail();
+  try{ await api("POST",{op:"switch",project:CUR}); }catch(err){ showErr(err.message); }
 });
 
-// inline name editor, reused for create + rename; shared toggle only for create
-let editorMode = null, sharedMode = false;
+document.getElementById("save").addEventListener("click", async ()=>{
+  const status = document.getElementById("status").value;
+  const info = document.getElementById("info").value;
+  try{
+    const updated = await api("POST",{op:"update",project:CUR,status,info});
+    const i = PROJECTS.findIndex(p=>p.id===CUR); if(i>=0) PROJECTS[i]=updated;
+    renderSelector();
+    document.getElementById("savedNote").textContent = "Saved ✓";
+  }catch(e){ showErr(e.message); }
+});
+
+// inline name editor (create + rename); shared toggle only for create
+let editorMode=null, sharedMode=false;
 function setShared(on){ sharedMode=on; document.getElementById("sharedToggle").classList.toggle("on",on); }
 function openEditor(mode, value){
-  editorMode = mode; setShared(false);
+  editorMode=mode; setShared(false);
   document.getElementById("sharedToggle").style.display = mode==="create" ? "" : "none";
-  const inp = document.getElementById("editorInput");
-  inp.value = value || ""; inp.placeholder = mode==="create" ? "New project name…" : "Rename project…";
+  const inp=document.getElementById("editorInput");
+  inp.value=value||""; inp.placeholder = mode==="create"?"New project name…":"Rename project…";
   document.getElementById("editor").classList.add("on"); inp.focus();
 }
 function closeEditor(){ editorMode=null; document.getElementById("editor").classList.remove("on"); }
 document.getElementById("new").addEventListener("click", ()=>openEditor("create",""));
-document.getElementById("edit").addEventListener("click", ()=>{
-  const sel=document.getElementById("proj"); const opt=sel.options[sel.selectedIndex];
-  const name = opt ? opt.text.replace(/^👥 /,"").replace(/ \\(\\d+\\)$/,"") : "";
-  openEditor("rename", name);
-});
+document.getElementById("edit").addEventListener("click", ()=>{ const p=curProject(); openEditor("rename", p?p.name:""); });
 document.getElementById("sharedToggle").addEventListener("click", ()=>setShared(!sharedMode));
 document.getElementById("editorCancel").addEventListener("click", closeEditor);
 document.getElementById("editorSave").addEventListener("click", saveEditor);
 document.getElementById("editorInput").addEventListener("keydown",(e)=>{ if(e.key==="Enter") saveEditor(); if(e.key==="Escape") closeEditor(); });
 async function saveEditor(){
-  const name = document.getElementById("editorInput").value.trim(); if(!name) return;
+  const name=document.getElementById("editorInput").value.trim(); if(!name) return;
   try{
-    if(editorMode==="create"){ const p=await api("projectsPath","POST",{op:"create",name,shared:sharedMode}); await api("projectsPath","POST",{op:"switch",project:p.id}); }
-    else { await api("projectsPath","POST",{op:"rename",project:CUR,name}); }
-    closeEditor(); await refresh();
+    if(editorMode==="create"){ const p=await api("POST",{op:"create",name,shared:sharedMode}); await api("POST",{op:"switch",project:p.id}); }
+    else { await api("POST",{op:"update",project:CUR,name}); }
+    closeEditor(); await load();
   }catch(e){ showErr(e.message); }
 }
 document.getElementById("edit").addEventListener("dblclick", async ()=>{
-  if(await confirmAsync("Archive this project? Tasks are kept but hidden.")){
-    try{ await api("projectsPath","POST",{op:"archive",project:CUR}); await refresh(); }catch(e){ showErr(e.message); }
+  if(await confirmAsync("Archive this project? It is kept but hidden.")){
+    try{ await api("POST",{op:"archive",project:CUR}); await load(); }catch(e){ showErr(e.message); }
   }
-});
-
-async function addTask(){
-  const inp=document.getElementById("new-task"); const title=inp.value.trim(); if(!title) return;
-  try{ await api("tasksPath","POST",{op:"add",title}); inp.value=""; await refresh(); }catch(e){ showErr(e.message); }
-}
-document.getElementById("add").addEventListener("click", addTask);
-document.getElementById("new-task").addEventListener("keydown",(e)=>{ if(e.key==="Enter") addTask(); });
-document.addEventListener("click", async (ev)=>{
-  const b=ev.target.closest("li button[data-op]"); if(!b) return;
-  const li=b.closest("li"); const id=li.dataset.id, op=b.dataset.op;
-  try{
-    if(op==="done") await api("tasksPath","POST",{op:"done",id});
-    else if(op==="update") await api("tasksPath","POST",{op:"update",id,status:b.dataset.status});
-    else if(op==="remove") await api("tasksPath","POST",{op:"remove",id});
-    await refresh();
-  }catch(e){ showErr(e.message); }
 });
 
 function showNoTelegram(){
   const plat = tg ? (tg.platform+" "+tg.version) : "no Telegram SDK";
-  const bar=document.querySelector(".addbar"); if(bar) bar.style.display="none";
   document.querySelector("header").style.display="none";
-  document.getElementById("list").innerHTML =
+  document.getElementById("main").innerHTML =
     '<div class="empty">Open this from the <b>Tasks</b> button in @clawmerqbot.<br>'+
     'A Mini App only receives your Telegram identity when launched from inside Telegram.'+
     '<br><br><small>Telegram: '+esc(plat)+' · initData: empty</small></div>';
 }
-if (INIT) refresh(); else showNoTelegram();
+if (INIT) load(); else showNoTelegram();
 </script>
 </body>
 </html>`;

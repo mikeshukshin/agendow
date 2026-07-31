@@ -3,7 +3,6 @@ import path from "node:path";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createMiniAppRoutes } from "./board.js";
 import { createProjectTool } from "./project-tool.js";
-import { createTaskTool } from "./task-tool.js";
 import { TaskStore } from "./store.js";
 
 // Config is validated by the loader against openclaw.plugin.json's configSchema.
@@ -78,10 +77,6 @@ export default definePluginEntry({
 
     api.registerTool((ctx: { requesterSenderId?: string }) => {
       const uid = toOwner(ctx);
-      return uid ? createTaskTool({ store, userId: uid }) : null;
-    });
-    api.registerTool((ctx: { requesterSenderId?: string }) => {
-      const uid = toOwner(ctx);
       return uid ? createProjectTool({ store, userId: uid }) : null;
     });
 
@@ -94,6 +89,6 @@ export default definePluginEntry({
       api.registerHttpRoute(route);
     }
 
-    api.logger?.info?.(`[agenda-clo] per-user task+project tools + Mini App at ${BASE_PATH}/app`);
+    api.logger?.info?.(`[agenda-clo] per-user project tool + Mini App at ${BASE_PATH}/app`);
   },
 });

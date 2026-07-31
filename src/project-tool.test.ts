@@ -14,16 +14,29 @@ function setup(userId = "111") {
 }
 
 describe("project tool", () => {
-  it("creates, switches, renames, archives for the user", async () => {
+  it("creates with status/info, gets, updates, switches", async () => {
     const { store, run } = setup();
-    expect((await run({ action: "create", name: "Work" })).id).toBe("work");
-    expect((await run({ action: "switch", project: "Work" })).current.id).toBe("work");
-    expect(store.activeProject("111").id).toBe("work");
-    await run({ action: "rename", project: "work", name: "Job" });
-    expect(store.getProject("111", "work")?.name).toBe("Job");
-    await run({ action: "archive", project: "work" });
+    const created = await run({ action: "create", name: "Cancore", status: "Active", info: "swap platform" });
+    expect(created.id).toBe("cancore");
+    expect(created.status).toBe("Active");
+
+    await run({ action: "switch", project: "Cancore" });
+    expect(store.activeProject("111").id).toBe("cancore");
+
+    const got = await run({ action: "get" }); // current project
+    expect(got.name).toBe("Cancore");
+    expect(got.info).toBe("swap platform");
+
+    const upd = await run({ action: "update", status: "Paused", info: "next: KYC" });
+    expect(upd.status).toBe("Paused");
+    expect(upd.info).toBe("next: KYC");
+  });
+
+  it("lists projects with status", async () => {
+    const { run } = setup();
+    await run({ action: "create", name: "Poly", status: "On hold" });
     const list = await run({ action: "list" });
-    expect(list.projects.map((p: any) => p.id)).not.toContain("work");
+    expect(list.projects.some((p: any) => p.name === "Poly" && p.status === "On hold")).toBe(true);
   });
 
   it("creates shared projects visible to others", async () => {
@@ -32,13 +45,14 @@ describe("project tool", () => {
     const a = createProjectTool({ store, userId: "111" });
     const b = createProjectTool({ store, userId: "222" });
     const created = (await a.execute("c", { action: "create", name: "Team", shared: true })).details as any;
-    expect(created.ownerId).toBe("shared");
+    expect(created.shared).toBe(true);
     const bList = (await b.execute("c", { action: "list" })).details as any;
     expect(bList.projects.some((p: any) => p.id === created.id && p.shared)).toBe(true);
   });
 
-  it("errors on missing name", async () => {
+  it("errors on missing name / unknown project", async () => {
     const { run } = setup();
     expect((await run({ action: "create" })).error).toMatch(/name required/);
+    expect((await run({ action: "get", project: "ghost" })).error).toMatch(/no such project/);
   });
 });
