@@ -266,7 +266,20 @@ document.addEventListener("click", async (ev) => {
     await load();
   } catch (e) { showErr(e.message); }
 });
-load();
+
+function showNoTelegram() {
+  const plat = tg ? (tg.platform + " " + tg.version) : "no Telegram SDK";
+  const unsafeUser = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user)
+    ? ("id " + tg.initDataUnsafe.user.id) : "none";
+  const bar = document.querySelector(".addbar"); if (bar) bar.style.display = "none";
+  document.getElementById("counts").textContent = "";
+  document.getElementById("list").innerHTML =
+    '<div class="empty">Open this from the <b>Tasks</b> button in @clawmerqbot.<br>' +
+    'A Mini App only receives your Telegram identity when launched from inside Telegram.' +
+    '<br><br><small>Telegram: ' + esc(plat) + ' · initData: empty · user(unsafe): ' + esc(unsafeUser) + '</small></div>';
+}
+
+if (INIT) { load(); } else { showNoTelegram(); }
 </script>
 </body>
 </html>`;
