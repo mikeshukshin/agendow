@@ -8,21 +8,17 @@ import { signInitDataForTest } from "./telegram-auth.js";
 import { TaskStore } from "./store.js";
 
 const TOKEN = "123456:test-bot-token";
-
 function initData(userId = 7): string {
   return signInitDataForTest(TOKEN, {
     auth_date: String(Math.floor(Date.now() / 1000)),
     user: JSON.stringify({ id: userId, first_name: "T" }),
   });
 }
-
-function mockReq(method: string, url: string, opts: { init?: string; body?: unknown } = {}) {
-  const req: any = opts.body !== undefined
-    ? Readable.from([Buffer.from(JSON.stringify(opts.body))])
-    : Readable.from([]);
+function mockReq(method: string, url: string, o: { init?: string; body?: unknown } = {}) {
+  const req: any = o.body !== undefined ? Readable.from([Buffer.from(JSON.stringify(o.body))]) : Readable.from([]);
   req.method = method;
   req.url = url;
-  req.headers = opts.init ? { "x-telegram-init-data": opts.init } : {};
+  req.headers = o.init ? { "x-telegram-init-data": o.init } : {};
   return req;
 }
 function mockRes() {
@@ -31,71 +27,62 @@ function mockRes() {
     headers: {} as Record<string, string>,
     body: "",
     setHeader(k: string, v: string) { this.headers[k.toLowerCase()] = v; },
-    end(chunk?: string) { if (chunk) this.body += chunk; },
+    end(c?: string) { if (c) this.body += c; },
   };
 }
 
-function setup() {
+function setup(ownerIds?: number[]) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agenda-mini-"));
   const store = new TaskStore(path.join(dir, "tasks.json"));
-  const routes = createMiniAppRoutes({
-    store, project: "main", basePath: "/plugins/agenda-clo",
-    getBotToken: () => TOKEN,
-  });
-  const api = routes.find((r) => r.path.endsWith("/tasks"))!;
-  const page = routes.find((r) => r.path.endsWith("/app"))!;
-  const call = async (method: string, o: { init?: string; body?: unknown } = {}) => {
+  const routes = createMiniAppRoutes({ store, ownerIds, basePath: "/plugins/agenda-clo", getBotToken: () => TOKEN });
+  const route = (suffix: string) => routes.find((r) => r.path.endsWith(suffix))!;
+  const call = async (suffix: string, method: string, o: { init?: string; body?: unknown; query?: string } = {}) => {
+    const r = route(suffix);
     const res = mockRes();
-    await api.handler(mockReq(method, api.path, o) as any, res as any);
-    return { status: res.statusCode, json: res.body ? JSON.parse(res.body) : undefined };
+    await r.handler(mockReq(method, r.path + (o.query ?? ""), o) as any, res as any);
+    return { status: res.statusCode, json: res.body ? JSON.parse(res.body) : undefined, res };
   };
-  return { store, call, page };
+  return { store, call, route };
 }
 
 describe("mini app API", () => {
-  it("rejects requests without valid initData", async () => {
+  it("requires valid initData", async () => {
     const { call } = setup();
-    expect((await call("GET")).status).toBe(401);
-    expect((await call("POST", { body: { op: "add", title: "x" } })).status).toBe(401);
+    expect((await call("/tasks", "GET")).status).toBe(401);
+    expect((await call("/projects", "GET")).status).toBe(401);
   });
 
-  it("runs the task lifecycle for an authenticated user", async () => {
+  it("enforces the owner allowlist", async () => {
+    const { call } = setup([999]);
+    expect((await call("/tasks", "GET", { init: initData(7) })).status).toBe(403);
+  });
+
+  it("manages projects and tasks for an authenticated owner", async () => {
     const { call } = setup();
     const init = initData();
-    const added = await call("POST", { init, body: { op: "add", title: "buy milk" } });
-    expect(added.status).toBe(200);
-    expect(added.json.title).toBe("buy milk");
 
-    const list = await call("GET", { init });
-    expect(list.status).toBe(200);
-    expect(list.json.project).toBe("main");
+    const ov = await call("/projects", "GET", { init });
+    expect(ov.json.activeProjectId).toBe("main");
+
+    const created = await call("/projects", "POST", { init, body: { op: "create", name: "Groceries" } });
+    expect(created.json.id).toBe("groceries");
+    await call("/projects", "POST", { init, body: { op: "switch", project: "groceries" } });
+
+    const added = await call("/tasks", "POST", { init, body: { op: "add", title: "milk" } });
+    expect(added.json.projectId).toBe("groceries"); // went to the active project
+
+    const list = await call("/tasks", "GET", { init });
+    expect(list.json.project.id).toBe("groceries");
     expect(list.json.tasks).toHaveLength(1);
 
-    const done = await call("POST", { init, body: { op: "done", id: added.json.id } });
+    const done = await call("/tasks", "POST", { init, body: { op: "done", id: added.json.id } });
     expect(done.json.status).toBe("done");
-
-    const removed = await call("POST", { init, body: { op: "remove", id: added.json.id } });
-    expect(removed.json.removed).toBe(true);
-    expect((await call("GET", { init })).json.summary.total).toBe(0);
   });
 
-  it("enforces an owner allowlist when configured", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agenda-owner-"));
-    const store = new TaskStore(path.join(dir, "tasks.json"));
-    const routes = createMiniAppRoutes({
-      store, project: "main", basePath: "/plugins/agenda-clo",
-      ownerIds: [999], getBotToken: () => TOKEN,
-    });
-    const api = routes.find((r) => r.path.endsWith("/tasks"))!;
+  it("serves the Mini App page", async () => {
+    const { route } = setup();
     const res = mockRes();
-    await api.handler(mockReq("GET", api.path, { init: initData(7) }) as any, res as any);
-    expect(res.statusCode).toBe(403); // user 7 not in [999]
-  });
-
-  it("serves the mini app HTML page", async () => {
-    const { page } = setup();
-    const res = mockRes();
-    await page.handler(mockReq("GET", page.path) as any, res as any);
+    await route("/app").handler(mockReq("GET", "/plugins/agenda-clo/app") as any, res as any);
     expect(res.headers["content-type"]).toMatch(/text\/html/);
     expect(res.body).toMatch(/telegram-web-app\.js/);
   });

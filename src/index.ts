@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createMiniAppRoutes } from "./board.js";
+import { createProjectTool } from "./project-tool.js";
 import { createTaskTool } from "./task-tool.js";
 import { TaskStore } from "./store.js";
 
@@ -10,7 +11,6 @@ const BASE_PATH = "/plugins/agenda-clo";
 
 interface AgendaConfig {
   storePath?: string;
-  webProject?: string;
   ownerIds?: number[];
 }
 
@@ -45,29 +45,22 @@ function readBotToken(api: unknown): string | undefined {
 export default definePluginEntry({
   id: "agenda-clo",
   name: "AgendaClo",
-  description: "Per-project task/todo lists for OpenClaw (project = agent), with a Telegram Mini App board.",
+  description: "Projects + per-project task lists for OpenClaw, with a Telegram Mini App board.",
   register(api) {
     const cfg = ((api as { pluginConfig?: AgendaConfig }).pluginConfig ?? {}) as AgendaConfig;
     const store = new TaskStore(resolveStorePath(api as PluginApiLike, cfg));
-    const project = cfg.webProject?.trim() || "main";
 
-    // Agent tool — factory form so the tool binds to the runtime project (agentId).
-    api.registerTool((ctx: { agentId?: string }) =>
-      createTaskTool({ agentId: ctx.agentId ?? "main", store }),
-    );
+    api.registerTool(createTaskTool({ store }));
+    api.registerTool(createProjectTool({ store }));
 
-    // Telegram Mini App: page + tasks API under /plugins/agenda-clo/*.
     const routes = createMiniAppRoutes({
       store,
-      project,
       ownerIds: cfg.ownerIds,
       basePath: BASE_PATH,
       getBotToken: () => readBotToken(api),
     });
-    for (const route of routes) {
-      api.registerHttpRoute(route);
-    }
+    for (const route of routes) api.registerHttpRoute(route);
 
-    api.logger?.info?.(`[agenda-clo] task tool + Mini App at ${BASE_PATH}/app`);
+    api.logger?.info?.(`[agenda-clo] task+project tools + Mini App at ${BASE_PATH}/app`);
   },
 });
