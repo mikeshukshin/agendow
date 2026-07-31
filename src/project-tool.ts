@@ -8,22 +8,25 @@ export const ProjectParamsSchema = Type.Object({
   project: Type.Optional(
     Type.String({ description: "Target project name or id (for rename/archive/unarchive/switch)" }),
   ),
+  shared: Type.Optional(
+    Type.Boolean({ description: "For create: make it a shared project visible to all owners." }),
+  ),
   includeArchived: Type.Optional(Type.Boolean()),
 });
 
-const DESCRIPTION = `Manage projects (named groups of tasks) and the current project.
+const DESCRIPTION = `Manage the current user's projects (named groups of tasks) and their current project. Projects are private to the user unless created as "shared".
 
 ACTIONS (set "action"):
-- list: list projects with task summary counts + which one is current.
-- create: create a project. Requires "name".
-- rename: rename a project. Requires "project" (current name/id) + "name" (new name).
+- list: list visible projects (yours + shared) with summary counts + which is current.
+- create: create a project. Requires "name". Set "shared": true for a shared project.
+- rename: rename a project. Requires "project" + "name".
 - archive: hide a project. Requires "project".
 - unarchive: restore an archived project. Requires "project".
-- switch: set the current project (subsequent task ops default to it). Requires "project".
-- current: show the current project + its summary.`;
+- switch: set your current project. Requires "project".
+- current: show your current project + its summary.`;
 
-export function createProjectTool(opts: { store: TaskStore }): AgentTool {
-  const { store } = opts;
+export function createProjectTool(opts: { store: TaskStore; userId: string }): AgentTool {
+  const { store, userId } = opts;
   return {
     name: "project",
     label: "Project",
@@ -37,40 +40,46 @@ export function createProjectTool(opts: { store: TaskStore }): AgentTool {
           case "list":
             return jsonResult(
               p.includeArchived
-                ? { active: store.activeProject().id, projects: store.listProjects({ includeArchived: true }) }
-                : store.overview(),
+                ? {
+                    active: store.activeProject(userId).id,
+                    projects: store.listProjects(userId, { includeArchived: true }),
+                  }
+                : store.overview(userId),
             );
           case "create": {
             const name = str(p.name);
             if (!name) throw new Error("name required for create");
-            return jsonResult(store.createProject({ name }));
+            return jsonResult(store.createProject({ userId, name, shared: p.shared === true }));
           }
           case "rename": {
             const target = str(p.project);
             const name = str(p.name);
             if (!target) throw new Error("project required for rename");
             if (!name) throw new Error("name required for rename");
-            return jsonResult(store.renameProject({ idOrName: target, name }));
+            return jsonResult(store.renameProject({ userId, idOrName: target, name }));
           }
           case "archive": {
             const target = str(p.project);
             if (!target) throw new Error("project required for archive");
-            return jsonResult(store.archiveProject({ idOrName: target }));
+            return jsonResult(store.archiveProject({ userId, idOrName: target }));
           }
           case "unarchive": {
             const target = str(p.project);
             if (!target) throw new Error("project required for unarchive");
-            return jsonResult(store.unarchiveProject({ idOrName: target }));
+            return jsonResult(store.unarchiveProject({ userId, idOrName: target }));
           }
           case "switch": {
             const target = str(p.project);
             if (!target) throw new Error("project required for switch");
-            const proj = store.setActiveProject(target);
+            const proj = store.setActiveProject(userId, target);
             return jsonResult({ switched: true, current: { id: proj.id, name: proj.name } });
           }
           case "current": {
-            const proj = store.activeProject();
-            return jsonResult({ current: { id: proj.id, name: proj.name }, summary: store.summary(proj.id) });
+            const proj = store.activeProject(userId);
+            return jsonResult({
+              current: { id: proj.id, name: proj.name, shared: proj.ownerId === "shared" },
+              summary: store.summary(userId, proj.id),
+            });
           }
           default:
             throw new Error(`unknown action: ${action || "(none)"}`);

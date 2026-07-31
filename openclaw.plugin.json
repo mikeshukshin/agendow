@@ -1,8 +1,8 @@
 {
   "id": "agenda-clo",
   "name": "AgendaClo",
-  "description": "Projects + per-project task lists for OpenClaw, with a Telegram Mini App board.",
-  "version": "0.2.0",
+  "description": "Per-user projects + task lists for OpenClaw, with a Telegram Mini App board.",
+  "version": "0.3.0",
   "configSchema": {
     "type": "object",
     "properties": {

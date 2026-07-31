@@ -10,82 +10,81 @@ function tmpFile(): string {
 function tmpStore(): TaskStore {
   return new TaskStore(tmpFile());
 }
+const A = "111";
+const B = "222";
 
-describe("TaskStore projects", () => {
-  it("seeds a Main project as active", () => {
+describe("TaskStore per-user projects", () => {
+  it("seeds a personal Main per user, isolated from other users", () => {
     const s = tmpStore();
-    expect(s.listProjects().map((p) => p.name)).toEqual(["Main"]);
-    expect(s.activeProject().id).toBe("main");
+    expect(s.listProjects(A).map((p) => p.name)).toEqual(["Main"]);
+    const aMain = s.activeProject(A);
+    expect(aMain.ownerId).toBe(A);
+    // B gets its own Main; A cannot see it and vice-versa
+    s.add({ userId: B, title: "b task" });
+    expect(s.listProjects(A).map((p) => p.ownerId)).toEqual([A]);
+    expect(s.listProjects(B).map((p) => p.ownerId)).toEqual([B]);
   });
 
-  it("adds tasks to the active project by default", () => {
+  it("keeps each user's projects and current project separate", () => {
     const s = tmpStore();
-    const t = s.add({ title: "a" });
-    expect(t.projectId).toBe("main");
-    expect(s.list()).toHaveLength(1);
-    expect(s.summary()).toEqual({ total: 1, todo: 1, doing: 0, done: 0 });
+    const groc = s.createProject({ userId: A, name: "Groceries" });
+    s.setActiveProject(A, "Groceries");
+    s.add({ userId: A, title: "milk" });
+    expect(s.list({ userId: A }).map((t) => t.title)).toEqual(["milk"]);
+    // B cannot see or resolve A's project
+    expect(s.listProjects(B).some((p) => p.id === groc.id)).toBe(false);
+    expect(() => s.list({ userId: B, project: "Groceries" })).toThrow(/no such project/);
+    expect(() => s.renameProject({ userId: B, idOrName: groc.id, name: "hax" })).toThrow();
+    // B's current project is still B's own Main
+    expect(s.activeProject(B).ownerId).toBe(B);
   });
 
-  it("creates, switches, and scopes tasks per project", () => {
+  it("shows shared projects to every user", () => {
     const s = tmpStore();
-    const groc = s.createProject({ name: "Groceries" });
-    expect(groc.id).toBe("groceries");
-    s.setActiveProject("Groceries"); // resolve by name
-    s.add({ title: "milk" });
-    expect(s.list().map((t) => t.title)).toEqual(["milk"]); // active = groceries
-    expect(s.list({ project: "main" })).toHaveLength(0);
-    s.add({ project: "main", title: "in main" }); // explicit project overrides active
-    expect(s.list({ project: "main" })).toHaveLength(1);
+    const team = s.createProject({ userId: A, name: "Team", shared: true });
+    expect(team.ownerId).toBe("shared");
+    expect(s.listProjects(B).some((p) => p.id === team.id)).toBe(true); // visible to B
+    // both users can add to the shared project
+    s.add({ userId: A, project: "Team", title: "a" });
+    s.add({ userId: B, project: team.id, title: "b" });
+    expect(s.summary(A, team.id).total).toBe(2);
+    expect(s.summary(B, team.id).total).toBe(2);
   });
 
-  it("refuses cross-project task writes", () => {
+  it("archives and renames within the user's visible set", () => {
     const s = tmpStore();
-    const t = s.add({ project: "main", title: "x" });
-    s.createProject({ name: "Other" });
-    expect(() => s.update({ project: "other", id: t.id, patch: { status: "done" } })).toThrow();
+    s.createProject({ userId: A, name: "Work" });
+    s.setActiveProject(A, "work");
+    s.renameProject({ userId: A, idOrName: "work", name: "Job" });
+    expect(s.getProject(A, "work")?.name).toBe("Job");
+    s.archiveProject({ userId: A, idOrName: "work" });
+    expect(s.activeProject(A).ownerId).toBe(A); // fell back to A's Main
+    expect(s.listProjects(A).map((p) => p.id)).not.toContain("work");
   });
 
-  it("keeps id on rename and moves active off an archived project", () => {
+  it("rolls up an overview for one user with shared flags", () => {
     const s = tmpStore();
-    s.createProject({ name: "Work" });
-    s.setActiveProject("work");
-    s.renameProject({ idOrName: "work", name: "Job" });
-    expect(s.getProject("work")?.name).toBe("Job"); // id stable across rename
-    s.archiveProject({ idOrName: "work" });
-    expect(s.activeProject().id).toBe("main"); // active fell back
-    expect(s.listProjects().map((p) => p.id)).not.toContain("work"); // hidden
-    expect(s.listProjects({ includeArchived: true }).map((p) => p.id)).toContain("work");
+    s.add({ userId: A, title: "x" });
+    s.createProject({ userId: A, name: "Team", shared: true });
+    const ov = s.overview(A);
+    expect(ov.projects.some((p) => p.shared)).toBe(true);
+    expect(ov.projects.find((p) => !p.shared)?.summary.total).toBe(1);
   });
 
-  it("throws on an unknown project", () => {
-    const s = tmpStore();
-    expect(() => s.list({ project: "nope" })).toThrow(/no such project/);
-  });
-
-  it("rolls up an overview with per-project summaries", () => {
-    const s = tmpStore();
-    s.add({ title: "a" });
-    s.createProject({ name: "B" });
-    const ov = s.overview();
-    expect(ov.activeProjectId).toBe("main");
-    expect(ov.projects.find((p) => p.id === "main")?.summary.total).toBe(1);
-  });
-
-  it("migrates v1 (agentId) files into projects", () => {
+  it("migrates v2 global projects into shared", () => {
     const f = tmpFile();
     fs.writeFileSync(
       f,
       JSON.stringify({
-        version: 1,
-        tasks: [
-          { id: "t1", agentId: "main", title: "old", status: "todo", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
-          { id: "t2", agentId: "proj-x", title: "other", status: "done", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
-        ],
+        version: 2,
+        activeProjectId: "main",
+        projects: [{ id: "old", name: "Old", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
+        tasks: [{ id: "t1", projectId: "old", title: "keep", status: "todo", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }],
       }),
     );
     const s = new TaskStore(f);
-    expect(s.listProjects().map((p) => p.id).sort()).toEqual(["main", "proj-x"]);
-    expect(s.list({ project: "main" }).map((t) => t.title)).toEqual(["old"]);
-    expect(s.list({ project: "proj-x" }).map((t) => t.title)).toEqual(["other"]);
+    const p = s.listProjects(A).find((x) => x.id === "old");
+    expect(p?.ownerId).toBe("shared"); // old global project is now shared
+    expect(s.list({ userId: A, project: "old" }).map((t) => t.title)).toEqual(["keep"]);
   });
 });

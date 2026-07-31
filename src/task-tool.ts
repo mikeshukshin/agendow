@@ -5,7 +5,7 @@ import { TaskStore, type TaskStatus } from "./store.js";
 export const TaskParamsSchema = Type.Object({
   action: literalEnum(["add", "list", "update", "done", "remove"]),
   project: Type.Optional(
-    Type.String({ description: "Project name or id. Defaults to the current project." }),
+    Type.String({ description: "Project name or id. Defaults to your current project." }),
   ),
   id: Type.Optional(Type.String({ description: "Task id (for update/done/remove)" })),
   title: Type.Optional(Type.String({ description: "Task title (for add/update)" })),
@@ -13,11 +13,11 @@ export const TaskParamsSchema = Type.Object({
   status: Type.Optional(literalEnum(["todo", "doing", "done"])),
 });
 
-const DESCRIPTION = `Manage to-do tasks inside a project. Tasks live in projects; if you omit "project", the current project is used (see the "project" tool to list/switch projects).
+const DESCRIPTION = `Manage the current user's to-do tasks inside a project. Tasks live in projects; if you omit "project", the current project is used (see the "project" tool to list/switch projects).
 
 ACTIONS (set "action"):
 - add: create a task. Requires "title". Optional "notes", "project".
-- list: list a project's tasks. Optional "status" filter (todo|doing|done), "project". Returns tasks + summary counts.
+- list: list a project's tasks. Optional "status" (todo|doing|done), "project". Returns tasks + summary.
 - update: modify a task. Requires "id". Optional "title", "notes", "status", "project".
 - done: mark a task done. Requires "id".
 - remove: delete a task. Requires "id".`;
@@ -26,8 +26,8 @@ function validStatus(v: unknown): TaskStatus | undefined {
   return v === "todo" || v === "doing" || v === "done" ? v : undefined;
 }
 
-export function createTaskTool(opts: { store: TaskStore }): AgentTool {
-  const { store } = opts;
+export function createTaskTool(opts: { store: TaskStore; userId: string }): AgentTool {
+  const { store, userId } = opts;
   return {
     name: "task",
     label: "Task",
@@ -42,14 +42,14 @@ export function createTaskTool(opts: { store: TaskStore }): AgentTool {
           case "add": {
             const title = str(p.title);
             if (!title) throw new Error("title required for add");
-            return jsonResult(store.add({ project, title, notes: str(p.notes) || undefined }));
+            return jsonResult(store.add({ userId, project, title, notes: str(p.notes) || undefined }));
           }
           case "list": {
-            const proj = store.getProject(project ?? "");
+            const proj = store.getProject(userId, project ?? "");
             return jsonResult({
               project: proj ? { id: proj.id, name: proj.name } : project,
-              summary: store.summary(project),
-              tasks: store.list({ project, status: validStatus(p.status) }),
+              summary: store.summary(userId, project),
+              tasks: store.list({ userId, project, status: validStatus(p.status) }),
             });
           }
           case "update": {
@@ -57,6 +57,7 @@ export function createTaskTool(opts: { store: TaskStore }): AgentTool {
             if (!id) throw new Error("id required for update");
             return jsonResult(
               store.update({
+                userId,
                 project,
                 id,
                 patch: {
@@ -70,12 +71,12 @@ export function createTaskTool(opts: { store: TaskStore }): AgentTool {
           case "done": {
             const id = str(p.id);
             if (!id) throw new Error("id required for done");
-            return jsonResult(store.update({ project, id, patch: { status: "done" } }));
+            return jsonResult(store.update({ userId, project, id, patch: { status: "done" } }));
           }
           case "remove": {
             const id = str(p.id);
             if (!id) throw new Error("id required for remove");
-            return jsonResult({ removed: store.remove({ project, id }), id });
+            return jsonResult({ removed: store.remove({ userId, project, id }), id });
           }
           default:
             throw new Error(`unknown action: ${action || "(none)"} — use add|list|update|done|remove`);

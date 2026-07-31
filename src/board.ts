@@ -5,7 +5,7 @@ import type { TaskStatus, TaskStore } from "./store.js";
 export interface MiniAppOptions {
   store: TaskStore;
   getBotToken: () => string | undefined;
-  ownerIds?: number[]; // Telegram user-id allowlist ([] / undefined = any valid user of the bot)
+  ownerIds?: number[]; // Telegram user-id allowlist; [] / undefined = any valid user of the bot
   basePath: string; // e.g. "/plugins/agenda-clo"
 }
 
@@ -48,36 +48,38 @@ function validStatus(v: unknown): TaskStatus | undefined {
   return v === "todo" || v === "doing" || v === "done" ? v : undefined;
 }
 
-// Authenticate via Telegram initData; on failure sends the error and returns false.
-function authOk(req: IncomingMessage, url: URL, res: ServerResponse, opts: MiniAppOptions): boolean {
+// Authenticate via Telegram initData; returns the Telegram user id (string) or
+// null after sending the error response.
+function auth(req: IncomingMessage, url: URL, res: ServerResponse, opts: MiniAppOptions): string | null {
   const header = req.headers["x-telegram-init-data"];
   const initData =
     (typeof header === "string" ? header : "") || url.searchParams.get("tgInitData") || "";
   const r = verifyInitData(initData, opts.getBotToken() ?? "");
   if (!r.ok) {
     sendJson(res, 401, { error: `unauthorized: ${r.reason}` });
-    return false;
+    return null;
   }
   if (opts.ownerIds && opts.ownerIds.length > 0 && !opts.ownerIds.includes(r.user.id)) {
     sendJson(res, 403, { error: "not an allowed user" });
-    return false;
+    return null;
   }
-  return true;
+  return String(r.user.id);
 }
 
 async function handleTasks(req: IncomingMessage, res: ServerResponse, opts: MiniAppOptions): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://localhost");
-  if (!authOk(req, url, res, opts)) return true;
+  const userId = auth(req, url, res, opts);
+  if (!userId) return true;
   const method = (req.method ?? "GET").toUpperCase();
   const { store } = opts;
 
   if (method === "GET") {
     const project = str(url.searchParams.get("project")) || undefined;
-    const proj = store.getProject(project ?? "");
+    const proj = store.getProject(userId, project ?? "");
     return sendJson(res, 200, {
       project: proj ? { id: proj.id, name: proj.name } : project,
-      summary: store.summary(project),
-      tasks: store.list({ project }),
+      summary: store.summary(userId, project),
+      tasks: store.list({ userId, project }),
     });
   }
   if (method === "POST") {
@@ -94,10 +96,11 @@ async function handleTasks(req: IncomingMessage, res: ServerResponse, opts: Mini
         case "add": {
           const title = str(body.title);
           if (!title) return sendJson(res, 400, { error: "title required" });
-          return sendJson(res, 200, store.add({ project, title, notes: str(body.notes) || undefined }));
+          return sendJson(res, 200, store.add({ userId, project, title, notes: str(body.notes) || undefined }));
         }
         case "update":
           return sendJson(res, 200, store.update({
+            userId,
             project,
             id: str(body.id),
             patch: {
@@ -107,9 +110,9 @@ async function handleTasks(req: IncomingMessage, res: ServerResponse, opts: Mini
             },
           }));
         case "done":
-          return sendJson(res, 200, store.update({ project, id: str(body.id), patch: { status: "done" } }));
+          return sendJson(res, 200, store.update({ userId, project, id: str(body.id), patch: { status: "done" } }));
         case "remove":
-          return sendJson(res, 200, { removed: store.remove({ project, id: str(body.id) }), id: str(body.id) });
+          return sendJson(res, 200, { removed: store.remove({ userId, project, id: str(body.id) }), id: str(body.id) });
         default:
           return sendJson(res, 400, { error: `unknown op: ${op || "(none)"}` });
       }
@@ -124,13 +127,12 @@ async function handleTasks(req: IncomingMessage, res: ServerResponse, opts: Mini
 
 async function handleProjects(req: IncomingMessage, res: ServerResponse, opts: MiniAppOptions): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://localhost");
-  if (!authOk(req, url, res, opts)) return true;
+  const userId = auth(req, url, res, opts);
+  if (!userId) return true;
   const method = (req.method ?? "GET").toUpperCase();
   const { store } = opts;
 
-  if (method === "GET") {
-    return sendJson(res, 200, store.overview());
-  }
+  if (method === "GET") return sendJson(res, 200, store.overview(userId));
   if (method === "POST") {
     let body: Record<string, unknown>;
     try {
@@ -145,22 +147,22 @@ async function handleProjects(req: IncomingMessage, res: ServerResponse, opts: M
         case "create": {
           const name = str(body.name);
           if (!name) return sendJson(res, 400, { error: "name required" });
-          return sendJson(res, 200, store.createProject({ name }));
+          return sendJson(res, 200, store.createProject({ userId, name, shared: body.shared === true }));
         }
         case "rename": {
           const name = str(body.name);
           if (!target || !name) return sendJson(res, 400, { error: "project and name required" });
-          return sendJson(res, 200, store.renameProject({ idOrName: target, name }));
+          return sendJson(res, 200, store.renameProject({ userId, idOrName: target, name }));
         }
         case "archive":
           if (!target) return sendJson(res, 400, { error: "project required" });
-          return sendJson(res, 200, store.archiveProject({ idOrName: target }));
+          return sendJson(res, 200, store.archiveProject({ userId, idOrName: target }));
         case "unarchive":
           if (!target) return sendJson(res, 400, { error: "project required" });
-          return sendJson(res, 200, store.unarchiveProject({ idOrName: target }));
+          return sendJson(res, 200, store.unarchiveProject({ userId, idOrName: target }));
         case "switch":
           if (!target) return sendJson(res, 400, { error: "project required" });
-          return sendJson(res, 200, store.setActiveProject(target));
+          return sendJson(res, 200, store.setActiveProject(userId, target));
         default:
           return sendJson(res, 400, { error: `unknown op: ${op || "(none)"}` });
       }
@@ -192,7 +194,7 @@ export function createMiniAppRoutes(opts: MiniAppOptions): MiniAppRoute[] {
   ];
 }
 
-// Self-contained Telegram Mini App: project switcher + per-project tasks.
+// Self-contained Telegram Mini App: project switcher (yours + shared) + tasks.
 export function renderMiniAppHtml(base: string): string {
   const cfg = JSON.stringify({ tasksPath: `${base}/tasks`, projectsPath: `${base}/projects` });
   return `<!doctype html>
@@ -214,6 +216,7 @@ export function renderMiniAppHtml(base: string): string {
   .bar { display:flex; gap:8px; align-items:center; }
   select#proj { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:9px 10px; font:inherit; }
   header button { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:9px 12px; font:inherit; cursor:pointer; }
+  header button.on { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); }
   .counts { color:var(--muted); font-size:12px; margin-top:8px; }
   main { padding:12px 14px 92px; }
   ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
@@ -230,7 +233,7 @@ export function renderMiniAppHtml(base: string): string {
   .editor { display:none; gap:8px; margin-top:8px; }
   .editor.on { display:flex; }
   .editor input { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:9px 10px; font:inherit; }
-  .editor button { background:var(--accent); color:var(--accent-fg); border:0; }
+  .editor button#editorSave { background:var(--accent); color:var(--accent-fg); border:0; }
   .empty { color:var(--muted); text-align:center; padding:40px 0; }
   .err { color:#f85149; padding:10px 14px; font-size:13px; }
 </style>
@@ -240,9 +243,14 @@ export function renderMiniAppHtml(base: string): string {
   <div class="bar">
     <select id="proj"></select>
     <button id="new" title="New project">＋</button>
-    <button id="edit" title="Rename / archive">⋯</button>
+    <button id="edit" title="Rename (double-tap: archive)">⋯</button>
   </div>
-  <div class="editor" id="editor"><input id="editorInput" /><button id="editorSave">Save</button><button id="editorCancel">✕</button></div>
+  <div class="editor" id="editor">
+    <input id="editorInput" />
+    <button id="sharedToggle" title="Shared project">👥</button>
+    <button id="editorSave">Save</button>
+    <button id="editorCancel">✕</button>
+  </div>
   <div class="counts" id="counts"></div>
 </header>
 <div id="err" class="err" hidden></div>
@@ -253,7 +261,7 @@ const CFG = ${cfg};
 const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 const INIT = (tg && tg.initData) || "";
-let CUR = null; // current project id
+let CUR = null;
 const esc = (s) => String(s).replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 async function api(pathKey, method, body) {
@@ -282,9 +290,8 @@ function taskRow(t){
 async function loadProjects(){
   const ov = await api("projectsPath","GET");
   CUR = ov.activeProjectId;
-  const sel = document.getElementById("proj");
-  sel.innerHTML = ov.projects.map(p =>
-    '<option value="'+esc(p.id)+'"'+(p.id===CUR?" selected":"")+'>'+esc(p.name)+' ('+p.summary.total+')</option>'
+  document.getElementById("proj").innerHTML = ov.projects.map(p =>
+    '<option value="'+esc(p.id)+'"'+(p.id===CUR?" selected":"")+'>'+(p.shared?"👥 ":"")+esc(p.name)+' ('+p.summary.total+')</option>'
   ).join("");
 }
 async function loadTasks(){
@@ -296,38 +303,39 @@ async function loadTasks(){
 }
 async function refresh(){ try{ showErr(""); await loadProjects(); await loadTasks(); }catch(e){ showErr(e.message); } }
 
-// project selector -> switch active project
 document.getElementById("proj").addEventListener("change", async (e)=>{
   try{ await api("projectsPath","POST",{op:"switch",project:e.target.value}); await refresh(); }catch(err){ showErr(err.message); }
 });
 
-// inline name editor, reused for create + rename
-let editorMode = null;
+// inline name editor, reused for create + rename; shared toggle only for create
+let editorMode = null, sharedMode = false;
+function setShared(on){ sharedMode=on; document.getElementById("sharedToggle").classList.toggle("on",on); }
 function openEditor(mode, value){
-  editorMode = mode;
-  const ed = document.getElementById("editor"); const inp = document.getElementById("editorInput");
+  editorMode = mode; setShared(false);
+  document.getElementById("sharedToggle").style.display = mode==="create" ? "" : "none";
+  const inp = document.getElementById("editorInput");
   inp.value = value || ""; inp.placeholder = mode==="create" ? "New project name…" : "Rename project…";
-  ed.classList.add("on"); inp.focus();
+  document.getElementById("editor").classList.add("on"); inp.focus();
 }
 function closeEditor(){ editorMode=null; document.getElementById("editor").classList.remove("on"); }
 document.getElementById("new").addEventListener("click", ()=>openEditor("create",""));
 document.getElementById("edit").addEventListener("click", ()=>{
-  const sel=document.getElementById("proj"); const name=sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text.replace(/ \\(\\d+\\)$/,"") : "";
+  const sel=document.getElementById("proj"); const opt=sel.options[sel.selectedIndex];
+  const name = opt ? opt.text.replace(/^👥 /,"").replace(/ \\(\\d+\\)$/,"") : "";
   openEditor("rename", name);
 });
+document.getElementById("sharedToggle").addEventListener("click", ()=>setShared(!sharedMode));
 document.getElementById("editorCancel").addEventListener("click", closeEditor);
 document.getElementById("editorSave").addEventListener("click", saveEditor);
 document.getElementById("editorInput").addEventListener("keydown",(e)=>{ if(e.key==="Enter") saveEditor(); if(e.key==="Escape") closeEditor(); });
 async function saveEditor(){
   const name = document.getElementById("editorInput").value.trim(); if(!name) return;
   try{
-    if(editorMode==="create"){ const p=await api("projectsPath","POST",{op:"create",name}); await api("projectsPath","POST",{op:"switch",project:p.id}); }
+    if(editorMode==="create"){ const p=await api("projectsPath","POST",{op:"create",name,shared:sharedMode}); await api("projectsPath","POST",{op:"switch",project:p.id}); }
     else { await api("projectsPath","POST",{op:"rename",project:CUR,name}); }
     closeEditor(); await refresh();
   }catch(e){ showErr(e.message); }
 }
-
-// long-press / second tap on ⋯ archives — keep it explicit via a confirm on edit's context:
 document.getElementById("edit").addEventListener("dblclick", async ()=>{
   if(await confirmAsync("Archive this project? Tasks are kept but hidden.")){
     try{ await api("projectsPath","POST",{op:"archive",project:CUR}); await refresh(); }catch(e){ showErr(e.message); }
