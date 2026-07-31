@@ -1,43 +1,43 @@
 # AgendaClo
 
-An OpenClaw plugin for **per-user project records** — each project is a living
-note with a short **status** and free-form **info** (goal, context, next steps,
-anything). Managed both by the agent (from chat) and by you (a **Telegram Mini
-App**). No task checklists — just projects, their status, and what you've
-written down.
+An OpenClaw plugin for **per-user project workspaces** — each project holds a
+short **status**, typed **params** (key/value), and **sections** (named text
+blocks — the project's topics). Managed both by the agent (from chat) and by you
+(a **Telegram Mini App**).
 
-Each owner (identified by Telegram id) has their own projects; nobody sees
-anyone else's. Projects can also be **shared** — visible to all owners. Only
-owners (`ownerIds`) get the tool and the Mini App.
+Each owner (Telegram id) has their own projects; nobody sees anyone else's.
+Projects can also be **shared** — visible to all owners. Only owners
+(`ownerIds`) get the tool and the Mini App.
 
 Built on the full plugin SDK (`definePluginEntry`, requires `openclaw >= 2026.5.17`).
 
 ## What a project holds
 
 - `name`
-- `status` — a short free-text line, e.g. `Active` or `Paused — waiting for hardware`.
-- `info` — free-form notes / recorded information (markdown): goal, context,
-  next steps, whatever you want to keep.
+- `status` — a short free-text line (e.g. `Active`, `Paused — waiting for hardware`).
+- `params` — typed key/value parameters (e.g. `chain: Canton`, `market: 42`).
+- `sections` — named text blocks / topics, each `{ title, body }` (markdown).
 
 ## Two surfaces, one store
 
-- **Agent tool** (`project`) — the bot lists/creates/updates your project
-  records from chat. The requester is identified via `ctx.requesterSenderId`
-  (set for real Telegram messages), so the tool is only offered to owners.
+- **Agent tool** (`project`) — the bot manages your projects from chat. The
+  requester is identified via `ctx.requesterSenderId` (real Telegram messages),
+  so the tool is only offered to owners.
 - **Telegram Mini App** — a board served under `/plugins/agenda-clo/*`: pick a
-  project, edit its status and info. Authenticated with Telegram `initData`.
+  project, edit its status, params, and sections. Authenticated with `initData`.
 
-Each user has their own projects (+ shared ones) and their own current project.
+Each user has their own projects (+ shared) and their own current project.
 
 ## Tool
 
-`project` — `list | get | create | update | archive | unarchive | switch | current`.
+`project` actions:
 
-- `create` takes `name` and optional `status`, `info`, `shared: true`.
-- `update` takes optional `project` (defaults to current) + any of `name`,
-  `status`, `info` (info replaces the whole notes field).
-- `get` / `current` return a project in full (status + info).
-- `list` returns your visible projects with their status.
+- `list` — visible projects with status. `get` / `current` — one project in full.
+- `create` — `name` (+ `status`, `shared`). `update` — `name` and/or `status`.
+- `set_param` — `key` + `value` (empty value removes).
+- `add_section` — `title` (+ `body`). `update_section` — `section` + `title`/`body`.
+  `remove_section` — `section`.
+- `archive` / `unarchive` / `switch`.
 
 ## Config
 
@@ -45,15 +45,15 @@ Under `plugins.entries.agenda-clo.config`:
 
 | Key         | Default                            | Meaning                                                        |
 | ----------- | ---------------------------------- | -------------------------------------------------------------- |
-| `storePath` | `<stateDir>/agenda-clo/tasks.json` | Where the project store lives.                                 |
-| `ownerIds`  | — (any valid Telegram bot user)    | Telegram user ids that get their own project space (and the Mini App). **Set this.** |
+| `storePath` | `<stateDir>/agenda-clo/tasks.json` | Where the store lives.                                         |
+| `ownerIds`  | — (any valid Telegram bot user)    | Telegram user ids that get their own workspace (and the Mini App). **Set this.** |
 
 ## Develop
 
 ```bash
 npm install
 npm run build     # tsc -> dist/
-npm test          # vitest: store (per-user isolation, shared, migration), project tool, initData auth, mini-app API
+npm test          # vitest: store (isolation, shared, params, sections, migration), project tool, initData auth, mini-app API
 ```
 
 ## Deploy (self-hosted gateway)
@@ -72,9 +72,9 @@ npm test          # vitest: store (per-user isolation, shared, migration), proje
    ```
 5. `openclaw gateway restart`.
 
-Older stores (task-era `v1`–`v3`) migrate to the `v4` record shape on first read:
-projects keep their name, gain empty `status`/`info`, tasks are dropped, and old
-global projects become `shared`.
+The store auto-migrates older files (`v1`–`v4`) on first read: projects keep
+their name/status, gain empty `params`/`sections`, old `info` becomes a `Notes`
+section, tasks are dropped, and old global projects become `shared`.
 
 ## Expose the Mini App + launch button
 
@@ -102,12 +102,12 @@ POST https://api.telegram.org/bot<token>/setChatMenuButton
 
 ## Layout
 
-- `src/store.ts` — per-user project store (name/status/info + shared, atomic write, migration).
+- `src/store.ts` — per-user project store (name/status/params/sections + shared, atomic write, migration).
 - `src/project-tool.ts` — the `project` agent tool (scoped to the requesting user).
 - `src/tool-helpers.ts` — shared tool result/schema helpers.
 - `src/board.ts` — Mini App page + `/projects` JSON API (scoped by the initData user).
 - `src/telegram-auth.ts` — Telegram `initData` HMAC validation.
-- `src/index.ts` — `definePluginEntry`: registers the tool (per-requester factory) + HTTP routes.
+- `src/index.ts` — `definePluginEntry`: registers the tool + HTTP routes.
 - `openclaw.plugin.json` — manifest (`contracts.tools: ["project"]`).
 
 ## Security notes
@@ -121,6 +121,11 @@ POST https://api.telegram.org/bot<token>/setChatMenuButton
 
 ## Roadmap
 
-- Browser (non-Telegram) access via Telegram Login Widget.
-- Reminders / scheduled status nudges per project.
-- Optional per-project model/subscription (bind a project to an OpenClaw agent).
+Toward a configurable, extensible workspace (hybrid: declarative config + code):
+
+- **Config-defined project types** (local config) declaring params + views.
+- **View kinds**, incl. an `api` view: a declarative HTTP request (param
+  interpolation) rendered to text via a template. Plus a `render` that assembles
+  a project's views into text.
+- **Code interface** (`ProjectViewKind`) to register custom view kinds for
+  advanced integrations (auth, non-trivial logic).

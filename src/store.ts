@@ -1,30 +1,44 @@
-// AgendaClo store — per-user projects as living records: a short status line and
-// a free-form info/notes field. A project belongs to one owner (Telegram id) or
-// is SHARED (visible to all owners). Each user has their own "current project".
-// Pure Node, atomic write. ponytail: whole-file read + atomic write, no lock —
-// fine at personal scale; note `overview` returns full info for every project.
+// AgendaClo store — per-user project records. A project has a name, a short
+// status, typed params (key/value), and sections ("topics": named text blocks).
+// Belongs to one owner (Telegram id) or is SHARED. Pure Node, atomic write.
+// ponytail: whole-file read + atomic write, no lock; `overview` returns full
+// projects (params + sections) — fine at personal scale, paginate if it grows.
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
 export const SHARED = "shared";
+
+export interface Section {
+  id: string;
+  title: string;
+  body: string;
+}
 
 export interface Project {
   id: string; // globally-unique slug
   ownerId: string; // Telegram user id, or SHARED
   name: string;
   status: string; // short free-text status line
-  info: string; // free-form notes (markdown)
+  params: Record<string, string>; // typed key/value parameters
+  sections: Section[]; // "topics": named text blocks
   createdAt: string;
   updatedAt: string;
   archivedAt?: string;
 }
 
-export type ProjectPatch = { name?: string; status?: string; info?: string };
+export type SectionInput = { id?: string; title: string; body?: string };
+export type ProjectPatch = {
+  name?: string;
+  status?: string;
+  params?: Record<string, string>; // full replace
+  sections?: SectionInput[]; // full replace (ids preserved / assigned)
+};
 
 interface StoreFile {
   version: number;
-  active: Record<string, string>; // userId -> current projectId
+  active: Record<string, string>;
   projects: Project[];
 }
 
@@ -45,46 +59,60 @@ export class TaskStore {
     this.filePath = filePath;
   }
 
-  // --- persistence + migration (any older shape -> v4) ----------------------
+  // --- persistence + migration (any older shape -> v5) ----------------------
   private read(): StoreFile {
     let raw: unknown;
     try {
       raw = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
     } catch {
-      return { version: 4, active: {}, projects: [] };
+      return { version: 5, active: {}, projects: [] };
     }
-    if (!raw || typeof raw !== "object") return { version: 4, active: {}, projects: [] };
+    if (!raw || typeof raw !== "object") return { version: 5, active: {}, projects: [] };
     const data = raw as {
       active?: Record<string, string>;
       activeProjectId?: string;
-      projects?: Array<Partial<Project> & { ownerId?: string }>;
+      projects?: Array<Record<string, unknown>>;
       tasks?: Array<{ agentId?: string; projectId?: string }>;
     };
 
-    // v1: no projects, tasks tagged agentId -> build shared projects.
-    let projects: Array<Partial<Project> & { ownerId?: string }>;
+    let rawProjects: Array<Record<string, unknown>>;
     if (!Array.isArray(data.projects)) {
+      // v1: build shared projects from task agentIds.
       const ids = [...new Set((data.tasks ?? []).map((t) => t.projectId || t.agentId || "main"))];
-      projects = ids.map((id) => ({ id, ownerId: SHARED, name: id === "main" ? "Main" : id }));
+      rawProjects = ids.map((id) => ({ id, ownerId: SHARED, name: id === "main" ? "Main" : id }));
     } else {
-      projects = data.projects;
+      rawProjects = data.projects;
     }
 
-    const normalized: Project[] = projects.map((p) => ({
-      id: p.id ?? slugify(p.name ?? "project"),
-      ownerId: p.ownerId || SHARED, // v2 global projects -> shared
-      name: p.name ?? p.id ?? "Project",
-      status: typeof p.status === "string" ? p.status : "",
-      info: typeof p.info === "string" ? p.info : "",
-      createdAt: p.createdAt ?? nowIso(),
-      updatedAt: p.updatedAt ?? nowIso(),
-      ...(p.archivedAt ? { archivedAt: p.archivedAt } : {}),
-    }));
+    const projects: Project[] = rawProjects.map((p) => {
+      const sections: Section[] = Array.isArray(p.sections)
+        ? (p.sections as SectionInput[]).map((s) => ({
+            id: s.id ?? randomUUID(),
+            title: String(s.title ?? "Section"),
+            body: typeof s.body === "string" ? s.body : "",
+          }))
+        : [];
+      // v4 `info` string -> a "Notes" section.
+      if (typeof p.info === "string" && p.info.trim() && sections.length === 0) {
+        sections.push({ id: randomUUID(), title: "Notes", body: p.info as string });
+      }
+      return {
+        id: (p.id as string) ?? slugify((p.name as string) ?? "project"),
+        ownerId: (p.ownerId as string) || SHARED, // v2 global -> shared
+        name: (p.name as string) ?? (p.id as string) ?? "Project",
+        status: typeof p.status === "string" ? p.status : "",
+        params: p.params && typeof p.params === "object" ? (p.params as Record<string, string>) : {},
+        sections,
+        createdAt: (p.createdAt as string) ?? nowIso(),
+        updatedAt: (p.updatedAt as string) ?? nowIso(),
+        ...(p.archivedAt ? { archivedAt: p.archivedAt as string } : {}),
+      };
+    });
 
     return {
-      version: 4,
+      version: 5,
       active: data.active && typeof data.active === "object" ? data.active : {},
-      projects: normalized,
+      projects,
     };
   }
 
@@ -111,7 +139,6 @@ export class TaskStore {
     return id;
   }
 
-  // Guarantee the user has a personal "Main" and a valid current project.
   private ensureUser(data: StoreFile, userId: string): boolean {
     let changed = false;
     const personal = data.projects.filter((p) => p.ownerId === userId && !p.archivedAt);
@@ -121,7 +148,8 @@ export class TaskStore {
         ownerId: userId,
         name: "Main",
         status: "",
-        info: "",
+        params: {},
+        sections: [],
         createdAt: nowIso(),
         updatedAt: nowIso(),
       });
@@ -147,6 +175,16 @@ export class TaskStore {
     return found.id;
   }
 
+  private resolveSection(project: Project, key: string): Section {
+    const k = (key ?? "").trim();
+    const lower = k.toLowerCase();
+    const found =
+      project.sections.find((s) => s.id === k) ??
+      project.sections.find((s) => s.title.toLowerCase() === lower);
+    if (!found) throw new Error(`no such section: ${key}`);
+    return found;
+  }
+
   private tx<T>(userId: string, fn: (data: StoreFile) => T, write: boolean): T {
     const data = this.read();
     const seeded = this.ensureUser(data, userId);
@@ -157,6 +195,10 @@ export class TaskStore {
 
   private view(p: Project): Project & { shared: boolean } {
     return { ...p, shared: p.ownerId === SHARED };
+  }
+  private project(data: StoreFile, userId: string, idOrName: string): Project {
+    const id = this.resolveId(data, userId, idOrName);
+    return data.projects.find((p) => p.id === id)!;
   }
 
   // --- projects -------------------------------------------------------------
@@ -172,9 +214,7 @@ export class TaskStore {
   getProject(userId: string, idOrName: string): (Project & { shared: boolean }) | undefined {
     return this.tx(userId, (d) => {
       try {
-        const id = this.resolveId(d, userId, idOrName);
-        const p = d.projects.find((x) => x.id === id);
-        return p ? this.view(p) : undefined;
+        return this.view(this.project(d, userId, idOrName));
       } catch {
         return undefined;
       }
@@ -186,7 +226,6 @@ export class TaskStore {
     name: string;
     shared?: boolean;
     status?: string;
-    info?: string;
   }): Project & { shared: boolean } {
     const name = (input.name ?? "").trim();
     if (!name) throw new Error("project name required");
@@ -196,7 +235,8 @@ export class TaskStore {
         ownerId: input.shared ? SHARED : input.userId,
         name,
         status: (input.status ?? "").trim(),
-        info: input.info ?? "",
+        params: {},
+        sections: [],
         createdAt: nowIso(),
         updatedAt: nowIso(),
       };
@@ -205,43 +245,95 @@ export class TaskStore {
     }, true);
   }
 
-  updateProject(input: {
+  updateProject(input: { userId: string; idOrName: string; patch: ProjectPatch }): Project & { shared: boolean } {
+    return this.tx(input.userId, (d) => {
+      const p = this.project(d, input.userId, input.idOrName);
+      const patch = input.patch ?? {};
+      if (typeof patch.name === "string" && patch.name.trim()) p.name = patch.name.trim();
+      if (typeof patch.status === "string") p.status = patch.status.trim();
+      if (patch.params && typeof patch.params === "object") p.params = { ...patch.params };
+      if (Array.isArray(patch.sections)) {
+        p.sections = patch.sections.map((s) => ({
+          id: s.id ?? randomUUID(),
+          title: String(s.title ?? "").trim() || "Section",
+          body: typeof s.body === "string" ? s.body : "",
+        }));
+      }
+      p.updatedAt = nowIso();
+      return this.view(p);
+    }, true);
+  }
+
+  setParam(input: { userId: string; idOrName: string; key: string; value: string }): Project & { shared: boolean } {
+    const key = (input.key ?? "").trim();
+    if (!key) throw new Error("param key required");
+    return this.tx(input.userId, (d) => {
+      const p = this.project(d, input.userId, input.idOrName);
+      const value = input.value ?? "";
+      if (value.trim() === "") delete p.params[key];
+      else p.params[key] = value;
+      p.updatedAt = nowIso();
+      return this.view(p);
+    }, true);
+  }
+
+  addSection(input: { userId: string; idOrName: string; title: string; body?: string }): Section {
+    const title = (input.title ?? "").trim();
+    if (!title) throw new Error("section title required");
+    return this.tx(input.userId, (d) => {
+      const p = this.project(d, input.userId, input.idOrName);
+      const section: Section = { id: randomUUID(), title, body: input.body ?? "" };
+      p.sections.push(section);
+      p.updatedAt = nowIso();
+      return section;
+    }, true);
+  }
+
+  updateSection(input: {
     userId: string;
     idOrName: string;
-    patch: ProjectPatch;
-  }): Project & { shared: boolean } {
+    section: string;
+    patch: { title?: string; body?: string };
+  }): Section {
     return this.tx(input.userId, (d) => {
-      const id = this.resolveId(d, input.userId, input.idOrName);
-      const project = d.projects.find((p) => p.id === id)!;
-      const patch = input.patch ?? {};
-      if (typeof patch.name === "string" && patch.name.trim()) project.name = patch.name.trim();
-      if (typeof patch.status === "string") project.status = patch.status.trim();
-      if (typeof patch.info === "string") project.info = patch.info;
-      project.updatedAt = nowIso();
-      return this.view(project);
+      const p = this.project(d, input.userId, input.idOrName);
+      const s = this.resolveSection(p, input.section);
+      if (typeof input.patch.title === "string" && input.patch.title.trim()) s.title = input.patch.title.trim();
+      if (typeof input.patch.body === "string") s.body = input.patch.body;
+      p.updatedAt = nowIso();
+      return s;
+    }, true);
+  }
+
+  removeSection(input: { userId: string; idOrName: string; section: string }): boolean {
+    return this.tx(input.userId, (d) => {
+      const p = this.project(d, input.userId, input.idOrName);
+      const before = p.sections.length;
+      const s = this.resolveSection(p, input.section);
+      p.sections = p.sections.filter((x) => x.id !== s.id);
+      p.updatedAt = nowIso();
+      return p.sections.length !== before;
     }, true);
   }
 
   archiveProject(input: { userId: string; idOrName: string }): Project & { shared: boolean } {
     return this.tx(input.userId, (d) => {
-      const id = this.resolveId(d, input.userId, input.idOrName);
-      const project = d.projects.find((p) => p.id === id)!;
-      project.archivedAt = nowIso();
-      project.updatedAt = nowIso();
+      const p = this.project(d, input.userId, input.idOrName);
+      p.archivedAt = nowIso();
+      p.updatedAt = nowIso();
       for (const uid of Object.keys(d.active)) {
-        if (d.active[uid] === id) this.ensureUser(d, uid);
+        if (d.active[uid] === p.id) this.ensureUser(d, uid);
       }
-      return this.view(project);
+      return this.view(p);
     }, true);
   }
 
   unarchiveProject(input: { userId: string; idOrName: string }): Project & { shared: boolean } {
     return this.tx(input.userId, (d) => {
-      const id = this.resolveId(d, input.userId, input.idOrName);
-      const project = d.projects.find((p) => p.id === id)!;
-      delete project.archivedAt;
-      project.updatedAt = nowIso();
-      return this.view(project);
+      const p = this.project(d, input.userId, input.idOrName);
+      delete p.archivedAt;
+      p.updatedAt = nowIso();
+      return this.view(p);
     }, true);
   }
 
@@ -251,13 +343,12 @@ export class TaskStore {
 
   setActiveProject(userId: string, idOrName: string): Project & { shared: boolean } {
     return this.tx(userId, (d) => {
-      const id = this.resolveId(d, userId, idOrName);
-      d.active[userId] = id;
-      return this.view(d.projects.find((p) => p.id === id)!);
+      const p = this.project(d, userId, idOrName);
+      d.active[userId] = p.id;
+      return this.view(p);
     }, true);
   }
 
-  // Dashboard roll-up for one user: current project id + visible projects (full).
   overview(userId: string): {
     activeProjectId: string;
     projects: Array<Project & { shared: boolean }>;

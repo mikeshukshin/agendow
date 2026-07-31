@@ -5,8 +5,8 @@ import type { TaskStore } from "./store.js";
 export interface MiniAppOptions {
   store: TaskStore;
   getBotToken: () => string | undefined;
-  ownerIds?: number[]; // Telegram user-id allowlist; [] / undefined = any valid user of the bot
-  basePath: string; // e.g. "/plugins/agenda-clo"
+  ownerIds?: number[];
+  basePath: string;
 }
 
 export interface MiniAppRoute {
@@ -29,7 +29,7 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   for await (const chunk of req) {
     const buf = chunk as Buffer;
     size += buf.length;
-    if (size > 256 * 1024) throw new Error("body too large");
+    if (size > 512 * 1024) throw new Error("body too large");
     chunks.push(buf);
   }
   const text = Buffer.concat(chunks).toString("utf8").trim();
@@ -45,12 +45,9 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
-// Authenticate via Telegram initData; returns the Telegram user id (string) or
-// null after sending the error response.
 function auth(req: IncomingMessage, url: URL, res: ServerResponse, opts: MiniAppOptions): string | null {
   const header = req.headers["x-telegram-init-data"];
-  const initData =
-    (typeof header === "string" ? header : "") || url.searchParams.get("tgInitData") || "";
+  const initData = (typeof header === "string" ? header : "") || url.searchParams.get("tgInitData") || "";
   const r = verifyInitData(initData, opts.getBotToken() ?? "");
   if (!r.ok) {
     sendJson(res, 401, { error: `unauthorized: ${r.reason}` });
@@ -94,7 +91,9 @@ async function handleProjects(req: IncomingMessage, res: ServerResponse, opts: M
             patch: {
               name: str(body.name) || undefined,
               status: typeof body.status === "string" ? str(body.status) : undefined,
-              info: typeof body.info === "string" ? body.info : undefined,
+              params: body.params && typeof body.params === "object" && !Array.isArray(body.params)
+                ? (body.params as Record<string, string>) : undefined,
+              sections: Array.isArray(body.sections) ? (body.sections as Array<{ id?: string; title: string; body?: string }>) : undefined,
             },
           }));
         case "archive":
@@ -136,8 +135,7 @@ export function createMiniAppRoutes(opts: MiniAppOptions): MiniAppRoute[] {
   ];
 }
 
-// Self-contained Telegram Mini App: project switcher (yours + shared) + a
-// status line and free-form info editor for the selected project.
+// Self-contained Telegram Mini App: project switcher + status + params + sections editor.
 export function renderMiniAppHtml(base: string): string {
   const cfg = JSON.stringify({ projectsPath: `${base}/projects` });
   return `<!doctype html>
@@ -164,13 +162,18 @@ export function renderMiniAppHtml(base: string): string {
   .editor.on { display:flex; }
   .editor input { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:9px 10px; font:inherit; }
   .editor button#editorSave { background:var(--accent); color:var(--accent-fg); border:0; }
-  main { padding:14px; display:flex; flex-direction:column; gap:10px; }
-  label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
-  #status { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:11px 12px; font:inherit; }
-  #info { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:11px 12px; font:inherit; min-height:200px; resize:vertical; }
-  #save { align-self:flex-start; background:var(--accent); color:var(--accent-fg); border:0; border-radius:10px; padding:11px 22px; font:inherit; font-weight:600; cursor:pointer; }
-  #save:disabled { opacity:.5; }
-  .saved { color:var(--muted); font-size:12px; align-self:center; }
+  main { padding:14px; display:flex; flex-direction:column; gap:8px; }
+  label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; margin-top:8px; }
+  input.f, textarea.f { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font:inherit; width:100%; }
+  textarea.f { min-height:90px; resize:vertical; }
+  .prow { display:flex; gap:6px; }
+  .prow input.k { flex:0 0 38%; }
+  .sec { border:1px solid var(--line); border-radius:12px; padding:10px; display:flex; flex-direction:column; gap:6px; background:var(--card); }
+  .sec .top { display:flex; gap:6px; align-items:center; }
+  .addbtn { align-self:flex-start; background:transparent; color:var(--accent); border:1px dashed var(--line); border-radius:10px; padding:7px 12px; font:inherit; cursor:pointer; }
+  .x { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:8px; padding:6px 10px; cursor:pointer; }
+  #save { align-self:flex-start; margin-top:12px; background:var(--accent); color:var(--accent-fg); border:0; border-radius:10px; padding:11px 22px; font:inherit; font-weight:600; cursor:pointer; }
+  .saved { color:var(--muted); font-size:12px; }
   .err { color:#f85149; padding:10px 14px; font-size:13px; }
   .empty { color:var(--muted); text-align:center; padding:40px 0; }
 </style>
@@ -191,10 +194,14 @@ export function renderMiniAppHtml(base: string): string {
 </header>
 <div id="err" class="err" hidden></div>
 <main id="main">
-  <label for="status">Status</label>
-  <input id="status" placeholder="e.g. Active · Paused — waiting for hardware" />
-  <label for="info">Info</label>
-  <textarea id="info" placeholder="Goal, context, next steps, anything… (markdown)"></textarea>
+  <label>Status</label>
+  <input id="status" class="f" placeholder="e.g. Active · Paused — waiting for hardware" />
+  <label>Parameters</label>
+  <div id="params" style="display:flex; flex-direction:column; gap:6px;"></div>
+  <button id="addParam" class="addbtn">＋ parameter</button>
+  <label>Sections</label>
+  <div id="sections" style="display:flex; flex-direction:column; gap:8px;"></div>
+  <button id="addSection" class="addbtn">＋ section</button>
   <div style="display:flex; gap:10px; align-items:center;"><button id="save">Save</button><span id="savedNote" class="saved"></span></div>
 </main>
 <script>
@@ -217,13 +224,33 @@ async function api(method, body) {
 }
 function showErr(m){ const e=document.getElementById("err"); if(!m){e.hidden=true;return;} e.textContent=m; e.hidden=false; }
 function confirmAsync(msg){ return new Promise((r)=>{ if(tg&&tg.showConfirm) tg.showConfirm(msg,r); else r(window.confirm(msg)); }); }
-
 function curProject(){ return PROJECTS.find(p => p.id === CUR); }
-function fillDetail(){
+
+function el(tag, cls, attrs){ const e=document.createElement(tag); if(cls) e.className=cls; Object.assign(e, attrs||{}); return e; }
+function paramRow(k, v){
+  const row = el("div","prow");
+  const ki = el("input","f k",{value:k||"", placeholder:"key"});
+  const vi = el("input","f",{value:v||"", placeholder:"value"});
+  const x = el("button","x",{textContent:"✕", onclick:()=>row.remove()});
+  row.append(ki, vi, x); return row;
+}
+function sectionCard(s){
+  const card = el("div","sec"); card.dataset.id = (s&&s.id)||"";
+  const top = el("div","top");
+  const ti = el("input","f",{value:(s&&s.title)||"", placeholder:"Section title"});
+  const x = el("button","x",{textContent:"✕", onclick:()=>card.remove()});
+  top.append(ti, x);
+  const bi = el("textarea","f",{value:(s&&s.body)||"", placeholder:"Text… (markdown)"});
+  card.append(top, bi); return card;
+}
+function renderDetail(){
   const p = curProject();
   document.getElementById("status").value = p ? (p.status||"") : "";
-  document.getElementById("info").value = p ? (p.info||"") : "";
-  document.getElementById("savedNote").textContent = "";
+  const pc = document.getElementById("params"); pc.innerHTML="";
+  if(p) for(const [k,v] of Object.entries(p.params||{})) pc.append(paramRow(k,v));
+  const sc = document.getElementById("sections"); sc.innerHTML="";
+  if(p) for(const s of (p.sections||[])) sc.append(sectionCard(s));
+  document.getElementById("savedNote").textContent="";
 }
 function renderSelector(){
   document.getElementById("proj").innerHTML = PROJECTS.map(p =>
@@ -232,29 +259,41 @@ function renderSelector(){
 }
 async function load(){
   try{ showErr("");
-    const ov = await api("GET");
-    PROJECTS = ov.projects; CUR = ov.activeProjectId;
-    renderSelector(); fillDetail();
+    const ov = await api("GET"); PROJECTS = ov.projects; CUR = ov.activeProjectId;
+    renderSelector(); renderDetail();
   }catch(e){ showErr(e.message); }
 }
 
 document.getElementById("proj").addEventListener("change", async (e)=>{
-  CUR = e.target.value; fillDetail();
+  CUR = e.target.value; renderDetail();
   try{ await api("POST",{op:"switch",project:CUR}); }catch(err){ showErr(err.message); }
 });
+document.getElementById("addParam").addEventListener("click", ()=>document.getElementById("params").append(paramRow("","")));
+document.getElementById("addSection").addEventListener("click", ()=>document.getElementById("sections").append(sectionCard(null)));
 
 document.getElementById("save").addEventListener("click", async ()=>{
   const status = document.getElementById("status").value;
-  const info = document.getElementById("info").value;
+  const params = {};
+  for(const row of document.querySelectorAll("#params .prow")){
+    const k = row.querySelector("input.k").value.trim();
+    const v = row.querySelectorAll("input")[1].value;
+    if(k) params[k] = v;
+  }
+  const sections = [];
+  for(const card of document.querySelectorAll("#sections .sec")){
+    const title = card.querySelector("input").value.trim();
+    const body = card.querySelector("textarea").value;
+    if(title) sections.push({ id: card.dataset.id || undefined, title, body });
+  }
   try{
-    const updated = await api("POST",{op:"update",project:CUR,status,info});
+    const updated = await api("POST",{op:"update",project:CUR,status,params,sections});
     const i = PROJECTS.findIndex(p=>p.id===CUR); if(i>=0) PROJECTS[i]=updated;
-    renderSelector();
+    renderSelector(); renderDetail();
     document.getElementById("savedNote").textContent = "Saved ✓";
   }catch(e){ showErr(e.message); }
 });
 
-// inline name editor (create + rename); shared toggle only for create
+// name editor (create + rename); shared toggle only for create
 let editorMode=null, sharedMode=false;
 function setShared(on){ sharedMode=on; document.getElementById("sharedToggle").classList.toggle("on",on); }
 function openEditor(mode, value){
@@ -289,7 +328,7 @@ function showNoTelegram(){
   const plat = tg ? (tg.platform+" "+tg.version) : "no Telegram SDK";
   document.querySelector("header").style.display="none";
   document.getElementById("main").innerHTML =
-    '<div class="empty">Open this from the <b>Tasks</b> button in @clawmerqbot.<br>'+
+    '<div class="empty">Open this from the <b>Projects</b> button in @clawmerqbot.<br>'+
     'A Mini App only receives your Telegram identity when launched from inside Telegram.'+
     '<br><br><small>Telegram: '+esc(plat)+' · initData: empty</small></div>';
 }

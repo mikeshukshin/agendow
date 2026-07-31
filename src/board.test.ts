@@ -51,16 +51,20 @@ describe("mini app API", () => {
     expect((await setup([999]).call("/projects", "GET", { init: initData(7) })).status).toBe(403);
   });
 
-  it("edits status + info for the authenticated user", async () => {
+  it("saves status + params + sections wholesale for the authenticated user", async () => {
     const { call } = setup();
     const init = initData(7);
     const created = await call("/projects", "POST", { init, body: { op: "create", name: "Cancore" } });
     expect(created.status).toBe(200);
-    await call("/projects", "POST", { init, body: { op: "update", project: created.json.id, status: "Active", info: "notes here" } });
+    await call("/projects", "POST", {
+      init,
+      body: { op: "update", project: created.json.id, status: "Active", params: { chain: "Canton" }, sections: [{ title: "Goal", body: "swap" }] },
+    });
     const ov = await call("/projects", "GET", { init });
     const p = ov.json.projects.find((x: any) => x.id === created.json.id);
     expect(p.status).toBe("Active");
-    expect(p.info).toBe("notes here");
+    expect(p.params).toEqual({ chain: "Canton" });
+    expect(p.sections[0]).toMatchObject({ title: "Goal", body: "swap" });
   });
 
   it("isolates users and shares shared projects", async () => {

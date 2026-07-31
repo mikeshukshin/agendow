@@ -2,32 +2,38 @@ import { Type } from "typebox";
 import { type AgentTool, jsonResult, literalEnum, str } from "./tool-helpers.js";
 import { TaskStore } from "./store.js";
 
+const ACTIONS = [
+  "list", "get", "create", "update", "archive", "unarchive", "switch", "current",
+  "set_param", "add_section", "update_section", "remove_section",
+] as const;
+
 export const ProjectParamsSchema = Type.Object({
-  action: literalEnum(["list", "get", "create", "update", "archive", "unarchive", "switch", "current"]),
-  project: Type.Optional(
-    Type.String({ description: "Target project name or id. Defaults to the current project." }),
-  ),
+  action: literalEnum(ACTIONS),
+  project: Type.Optional(Type.String({ description: "Target project name or id. Defaults to current." })),
   name: Type.Optional(Type.String({ description: "Project name (create, or rename via update)" })),
   status: Type.Optional(Type.String({ description: "Short status line (create/update)" })),
-  info: Type.Optional(
-    Type.String({ description: "Free-form notes / recorded info, markdown (create/update). Replaces existing info." }),
-  ),
-  shared: Type.Optional(
-    Type.Boolean({ description: "For create: make it a shared project visible to all owners." }),
-  ),
+  shared: Type.Optional(Type.Boolean({ description: "For create: shared project visible to all owners." })),
+  key: Type.Optional(Type.String({ description: "Param key (set_param). Empty value removes it." })),
+  value: Type.Optional(Type.String({ description: "Param value (set_param)" })),
+  section: Type.Optional(Type.String({ description: "Section title or id (update_section/remove_section)" })),
+  title: Type.Optional(Type.String({ description: "Section title (add_section, or rename via update_section)" })),
+  body: Type.Optional(Type.String({ description: "Section body text, markdown (add_section/update_section)" })),
   includeArchived: Type.Optional(Type.Boolean()),
 });
 
-const DESCRIPTION = `Manage the current user's projects. A project is a living record: a name, a short "status", and free-form "info" notes (goal, context, next steps, anything). Projects are private to the user unless created as "shared".
+const DESCRIPTION = `Manage the current user's projects. A project is a record: a name, a short "status", typed "params" (key/value), and "sections" (named text blocks — the project's topics). Private per user unless created "shared".
 
 ACTIONS (set "action"):
-- list: list visible projects (yours + shared) with their status. Use this for "what projects do I have".
-- get: show one project in full (status + info). Optional "project" (defaults to current).
-- create: create a project. Requires "name". Optional "status", "info", "shared".
-- update: change a project. Optional "project" (defaults to current) + any of "name", "status", "info". "info" replaces the whole notes field.
-- archive / unarchive: hide / restore a project. Requires "project".
-- switch: set the current project. Requires "project".
-- current: show the current project in full.`;
+- list: visible projects (yours + shared) with their status. For "what projects do I have".
+- get / current: show one project in full (status, params, sections). Optional "project".
+- create: create a project. Requires "name". Optional "status", "shared".
+- update: change "name" and/or "status". Optional "project".
+- set_param: set/remove a parameter. Requires "key"; "value" (empty removes). Optional "project".
+- add_section: add a section/topic. Requires "title". Optional "body", "project".
+- update_section: edit a section. Requires "section" (title/id) + "title" and/or "body".
+- remove_section: delete a section. Requires "section".
+- archive / unarchive: hide / restore. Requires "project".
+- switch: set the current project. Requires "project".`;
 
 export function createProjectTool(opts: { store: TaskStore; userId: string }): AgentTool {
   const { store, userId } = opts;
@@ -39,64 +45,71 @@ export function createProjectTool(opts: { store: TaskStore; userId: string }): A
     async execute(_toolCallId, params) {
       const p = (params ?? {}) as Record<string, unknown>;
       const action = str(p.action);
-      const target = str(p.project);
+      const project = str(p.project);
       try {
         switch (action) {
           case "list":
             return jsonResult(
               p.includeArchived
-                ? {
-                    active: store.activeProject(userId).id,
-                    projects: store.listProjects(userId, { includeArchived: true }),
-                  }
+                ? { active: store.activeProject(userId).id, projects: store.listProjects(userId, { includeArchived: true }) }
                 : store.overview(userId),
             );
-          case "get": {
-            const proj = store.getProject(userId, target);
-            if (!proj) throw new Error(`no such project: ${target || "(current)"}`);
+          case "get":
+          case "current": {
+            const proj = action === "current" ? store.activeProject(userId) : store.getProject(userId, project);
+            if (!proj) throw new Error(`no such project: ${project || "(current)"}`);
             return jsonResult(proj);
           }
           case "create": {
             const name = str(p.name);
             if (!name) throw new Error("name required for create");
-            return jsonResult(
-              store.createProject({
-                userId,
-                name,
-                shared: p.shared === true,
-                status: str(p.status) || undefined,
-                info: typeof p.info === "string" ? p.info : undefined,
-              }),
-            );
+            return jsonResult(store.createProject({ userId, name, shared: p.shared === true, status: str(p.status) || undefined }));
           }
-          case "update": {
-            return jsonResult(
-              store.updateProject({
-                userId,
-                idOrName: target,
-                patch: {
-                  name: str(p.name) || undefined,
-                  status: typeof p.status === "string" ? str(p.status) : undefined,
-                  info: typeof p.info === "string" ? p.info : undefined,
-                },
-              }),
-            );
+          case "update":
+            return jsonResult(store.updateProject({
+              userId,
+              idOrName: project,
+              patch: {
+                name: str(p.name) || undefined,
+                status: typeof p.status === "string" ? str(p.status) : undefined,
+              },
+            }));
+          case "set_param": {
+            const key = str(p.key);
+            if (!key) throw new Error("key required for set_param");
+            return jsonResult(store.setParam({ userId, idOrName: project, key, value: typeof p.value === "string" ? p.value : "" }));
           }
-          case "archive": {
-            if (!target) throw new Error("project required for archive");
-            return jsonResult(store.archiveProject({ userId, idOrName: target }));
+          case "add_section": {
+            const title = str(p.title);
+            if (!title) throw new Error("title required for add_section");
+            return jsonResult(store.addSection({ userId, idOrName: project, title, body: typeof p.body === "string" ? p.body : "" }));
           }
-          case "unarchive": {
-            if (!target) throw new Error("project required for unarchive");
-            return jsonResult(store.unarchiveProject({ userId, idOrName: target }));
+          case "update_section": {
+            const section = str(p.section);
+            if (!section) throw new Error("section required for update_section");
+            return jsonResult(store.updateSection({
+              userId,
+              idOrName: project,
+              section,
+              patch: { title: str(p.title) || undefined, body: typeof p.body === "string" ? p.body : undefined },
+            }));
           }
+          case "remove_section": {
+            const section = str(p.section);
+            if (!section) throw new Error("section required for remove_section");
+            return jsonResult({ removed: store.removeSection({ userId, idOrName: project, section }), section });
+          }
+          case "archive":
+            if (!project) throw new Error("project required for archive");
+            return jsonResult(store.archiveProject({ userId, idOrName: project }));
+          case "unarchive":
+            if (!project) throw new Error("project required for unarchive");
+            return jsonResult(store.unarchiveProject({ userId, idOrName: project }));
           case "switch": {
-            if (!target) throw new Error("project required for switch");
-            const proj = store.setActiveProject(userId, target);
+            if (!project) throw new Error("project required for switch");
+            const proj = store.setActiveProject(userId, project);
             return jsonResult({ switched: true, current: { id: proj.id, name: proj.name } });
           }
-          case "current":
-            return jsonResult(store.activeProject(userId));
           default:
             throw new Error(`unknown action: ${action || "(none)"}`);
         }

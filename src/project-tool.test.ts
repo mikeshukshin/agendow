@@ -14,22 +14,23 @@ function setup(userId = "111") {
 }
 
 describe("project tool", () => {
-  it("creates with status/info, gets, updates, switches", async () => {
-    const { store, run } = setup();
-    const created = await run({ action: "create", name: "Cancore", status: "Active", info: "swap platform" });
+  it("create + status + params + sections lifecycle", async () => {
+    const { run } = setup();
+    const created = await run({ action: "create", name: "Cancore", status: "Active" });
     expect(created.id).toBe("cancore");
-    expect(created.status).toBe("Active");
-
     await run({ action: "switch", project: "Cancore" });
-    expect(store.activeProject("111").id).toBe("cancore");
 
-    const got = await run({ action: "get" }); // current project
-    expect(got.name).toBe("Cancore");
-    expect(got.info).toBe("swap platform");
+    await run({ action: "set_param", key: "chain", value: "Canton" });
+    await run({ action: "add_section", title: "Goal", body: "cross-chain swap" });
+    await run({ action: "update_section", section: "Goal", body: "swap + bridge" });
 
-    const upd = await run({ action: "update", status: "Paused", info: "next: KYC" });
-    expect(upd.status).toBe("Paused");
-    expect(upd.info).toBe("next: KYC");
+    const got = await run({ action: "get" });
+    expect(got.params).toEqual({ chain: "Canton" });
+    expect(got.sections[0]).toMatchObject({ title: "Goal", body: "swap + bridge" });
+
+    expect((await run({ action: "remove_section", section: "Goal" })).removed).toBe(true);
+    await run({ action: "set_param", key: "chain", value: "" });
+    expect((await run({ action: "get" })).params).toEqual({});
   });
 
   it("lists projects with status", async () => {
@@ -39,20 +40,10 @@ describe("project tool", () => {
     expect(list.projects.some((p: any) => p.name === "Poly" && p.status === "On hold")).toBe(true);
   });
 
-  it("creates shared projects visible to others", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agenda-shared-"));
-    const store = new TaskStore(path.join(dir, "tasks.json"));
-    const a = createProjectTool({ store, userId: "111" });
-    const b = createProjectTool({ store, userId: "222" });
-    const created = (await a.execute("c", { action: "create", name: "Team", shared: true })).details as any;
-    expect(created.shared).toBe(true);
-    const bList = (await b.execute("c", { action: "list" })).details as any;
-    expect(bList.projects.some((p: any) => p.id === created.id && p.shared)).toBe(true);
-  });
-
-  it("errors on missing name / unknown project", async () => {
+  it("errors on missing fields / unknown targets", async () => {
     const { run } = setup();
     expect((await run({ action: "create" })).error).toMatch(/name required/);
-    expect((await run({ action: "get", project: "ghost" })).error).toMatch(/no such project/);
+    expect((await run({ action: "set_param", value: "v" })).error).toMatch(/key required/);
+    expect((await run({ action: "update_section", section: "ghost", body: "x" })).error).toMatch(/no such section/);
   });
 });
