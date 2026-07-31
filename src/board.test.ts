@@ -34,7 +34,7 @@ function mockRes() {
 function setup(ownerIds?: number[]) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agenda-mini-"));
   const store = new TaskStore(path.join(dir, "tasks.json"));
-  const routes = createMiniAppRoutes({ store, ownerIds, basePath: "/plugins/agenda-clo", getBotToken: () => TOKEN });
+  const routes = createMiniAppRoutes({ store, ownerIds, basePath: "/plugins/agendow", getBotToken: () => TOKEN });
   const route = (suffix: string) => routes.find((r) => r.path.endsWith(suffix))!;
   const call = async (suffix: string, method: string, o: { init?: string; body?: unknown } = {}) => {
     const r = route(suffix);
@@ -82,7 +82,7 @@ describe("mini app API", () => {
   it("serves the Mini App page", async () => {
     const { route } = setup();
     const res = mockRes();
-    await route("/app").handler(mockReq("GET", "/plugins/agenda-clo/app") as any, res as any);
+    await route("/app").handler(mockReq("GET", "/plugins/agendow/app") as any, res as any);
     expect(res.headers["content-type"]).toMatch(/text\/html/);
     expect(res.body).toMatch(/telegram-web-app\.js/);
   });

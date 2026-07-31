@@ -1,4 +1,4 @@
-# AgendaClo
+# Agendow
 
 An OpenClaw plugin for **per-user project workspaces** — each project holds a
 short **status**, typed **params** (key/value), and **sections** (named text
@@ -23,7 +23,7 @@ Built on the full plugin SDK (`definePluginEntry`, requires `openclaw >= 2026.5.
 - **Agent tool** (`project`) — the bot manages your projects from chat. The
   requester is identified via `ctx.requesterSenderId` (real Telegram messages),
   so the tool is only offered to owners.
-- **Telegram Mini App** — a board served under `/plugins/agenda-clo/*`: pick a
+- **Telegram Mini App** — a board served under `/plugins/agendow/*`: pick a
   project, edit its status, params, and sections. Authenticated with `initData`.
 
 Each user has their own projects (+ shared) and their own current project.
@@ -41,11 +41,11 @@ Each user has their own projects (+ shared) and their own current project.
 
 ## Config
 
-Under `plugins.entries.agenda-clo.config`:
+Under `plugins.entries.agendow.config`:
 
 | Key         | Default                            | Meaning                                                        |
 | ----------- | ---------------------------------- | -------------------------------------------------------------- |
-| `storePath` | `<stateDir>/agenda-clo/tasks.json` | Where the store lives.                                         |
+| `storePath` | `<stateDir>/agendow/tasks.json` | Where the store lives.                                         |
 | `ownerIds`  | — (any valid Telegram bot user)    | Telegram user ids that get their own workspace (and the Mini App). **Set this.** |
 
 ## Develop
@@ -59,15 +59,15 @@ npm test          # vitest: store (isolation, shared, params, sections, migratio
 ## Deploy (self-hosted gateway)
 
 1. `npm run build` → `dist/`.
-2. Copy the plugin dir to `~/.openclaw/extensions/agenda-clo` with `dist/`,
+2. Copy the plugin dir to `~/.openclaw/extensions/agendow` with `dist/`,
    `openclaw.plugin.json`, `package.json`, and `node_modules/typebox` (the only
    runtime dep; `openclaw` is a host-provided peer).
 3. **`chown` to the gateway user** (plugins run in-process; foreign-owned files are blocked).
 4. Enable:
    ```json5
    plugins: {
-     load: { paths: ["/root/.openclaw/extensions/agenda-clo"] },
-     entries: { "agenda-clo": { enabled: true, config: { ownerIds: [<owner-tg-id>, ...] } } },
+     load: { paths: ["/root/.openclaw/extensions/agendow"] },
+     entries: { "agendow": { enabled: true, config: { ownerIds: [<owner-tg-id>, ...] } } },
    }
    ```
 5. `openclaw gateway restart`.
@@ -79,14 +79,14 @@ section, tasks are dropped, and old global projects become `shared`.
 ## Expose the Mini App + launch button
 
 Telegram Mini Apps need public HTTPS, but the gateway is loopback-only. Front it
-with a tunnel/proxy exposing **only** `/plugins/agenda-clo/*` (keep the Control
+with a tunnel/proxy exposing **only** `/plugins/agendow/*` (keep the Control
 UI private) — e.g. a Cloudflare Tunnel with a path-restricted ingress:
 
 ```yaml
 # /etc/cloudflared/config.yml
 ingress:
   - hostname: agenda.example.com
-    path: ^/plugins/agenda-clo(/.*)?$
+    path: ^/plugins/agendow(/.*)?$
     service: http://localhost:18789
   - service: http_status:404
 ```
@@ -97,7 +97,7 @@ clashing with OpenClaw's default commands menu):
 ```
 POST https://api.telegram.org/bot<token>/setChatMenuButton
 { "chat_id": <owner-id>, "menu_button": { "type": "web_app", "text": "Projects",
-    "web_app": { "url": "https://agenda.example.com/plugins/agenda-clo/app" } } }
+    "web_app": { "url": "https://agenda.example.com/plugins/agendow/app" } } }
 ```
 
 ## Layout
@@ -116,7 +116,7 @@ POST https://api.telegram.org/bot<token>/setChatMenuButton
   visibility on every resolution, so one user can't read or mutate another's.
 - The Mini App API requires valid Telegram `initData`; the chat tool requires an
   identifiable owner (`requesterSenderId`). Non-owners get neither.
-- Serve `/plugins/agenda-clo/*` (routed to plugins), not `/agenda` (falls through
+- Serve `/plugins/agendow/*` (routed to plugins), not `/agenda` (falls through
   to the Control UI). Expose only that path publicly.
 
 ## Roadmap

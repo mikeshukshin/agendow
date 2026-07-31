@@ -1,4 +1,4 @@
-// AgendaClo store — per-user project records. A project has a name, a short
+// Agendow store — per-user project records. A project has a name, a short
 // status, typed params (key/value), and sections ("topics": named text blocks).
 // Belongs to one owner (Telegram id) or is SHARED. Pure Node, atomic write.
 // ponytail: whole-file read + atomic write, no lock; `overview` returns full

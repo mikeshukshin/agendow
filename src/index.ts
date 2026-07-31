@@ -6,7 +6,7 @@ import { createProjectTool } from "./project-tool.js";
 import { TaskStore } from "./store.js";
 
 // Config is validated by the loader against openclaw.plugin.json's configSchema.
-const BASE_PATH = "/plugins/agenda-clo";
+const BASE_PATH = "/plugins/agendow";
 
 interface AgendaConfig {
   storePath?: string;
@@ -32,7 +32,7 @@ function resolveStorePath(api: PluginApiLike, cfg: AgendaConfig): string {
     // fall back to home
   }
   if (!base) base = path.join(os.homedir(), ".openclaw");
-  return path.join(base, "agenda-clo", "tasks.json");
+  return path.join(base, "agendow", "tasks.json");
 }
 
 function readBotToken(api: unknown): string | undefined {
@@ -50,8 +50,8 @@ function telegramIdFromSender(raw: unknown): string | undefined {
 }
 
 export default definePluginEntry({
-  id: "agenda-clo",
-  name: "AgendaClo",
+  id: "agendow",
+  name: "Agendow",
   description: "Per-user projects + task lists for OpenClaw, with a Telegram Mini App board.",
   register(api) {
     const cfg = ((api as { pluginConfig?: AgendaConfig }).pluginConfig ?? {}) as AgendaConfig;
@@ -67,7 +67,7 @@ export default definePluginEntry({
         // A sender was present but we couldn't parse a Telegram id — surface it
         // so the format can be fixed instead of silently hiding the tools.
         if (typeof raw === "string" && raw.trim()) {
-          api.logger?.warn?.(`[agenda-clo] unrecognized sender id: ${raw}`);
+          api.logger?.warn?.(`[agendow] unrecognized sender id: ${raw}`);
         }
         return undefined;
       }
@@ -89,6 +89,6 @@ export default definePluginEntry({
       api.registerHttpRoute(route);
     }
 
-    api.logger?.info?.(`[agenda-clo] per-user project tool + Mini App at ${BASE_PATH}/app`);
+    api.logger?.info?.(`[agendow] per-user project tool + Mini App at ${BASE_PATH}/app`);
   },
 });

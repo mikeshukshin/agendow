@@ -143,7 +143,7 @@ export function renderMiniAppHtml(base: string): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>AgendaClo</title>
+<title>Agendow</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root { color-scheme: light dark;

@@ -1,6 +1,6 @@
 {
-  "id": "agenda-clo",
-  "name": "AgendaClo",
+  "id": "agendow",
+  "name": "Agendow",
   "description": "Per-user project workspaces (status, params, sections) for OpenClaw, with a Telegram Mini App.",
   "version": "0.5.0",
   "configSchema": {

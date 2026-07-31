@@ -1,5 +1,5 @@
 {
-  "name": "agenda-clo",
+  "name": "agendow",
   "version": "0.1.0",
   "description": "Per-project task/todo lists for OpenClaw (project = agent).",
   "type": "module",
