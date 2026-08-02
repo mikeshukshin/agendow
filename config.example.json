@@ -1,0 +1,26 @@
+{
+  "//": "Copy to <stateDir>/agendow/config.json (next to the store) and hand-edit. Read fresh on each render — no restart needed. Defines project types: params to declare and views to render.",
+  "projectTypes": {
+    "polymarket-bot": {
+      "label": "Polymarket Bot",
+      "params": [
+        { "key": "market", "label": "Market id" },
+        { "key": "wallet", "label": "Wallet" }
+      ],
+      "views": [
+        { "kind": "text", "title": "Notes", "section": "Notes" },
+        { "kind": "params", "title": "Parameters" },
+        {
+          "kind": "api",
+          "title": "Market",
+          "request": {
+            "url": "https://gamma-api.polymarket.com/markets/{market}",
+            "method": "GET",
+            "headers": {}
+          },
+          "render": "{question} — {outcomePrices}"
+        }
+      ]
+    }
+  }
+}

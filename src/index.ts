@@ -55,7 +55,10 @@ export default definePluginEntry({
   description: "Per-user projects + task lists for OpenClaw, with a Telegram Mini App board.",
   register(api) {
     const cfg = ((api as { pluginConfig?: AgendaConfig }).pluginConfig ?? {}) as AgendaConfig;
-    const store = new TaskStore(resolveStorePath(api as PluginApiLike, cfg));
+    const storePath = resolveStorePath(api as PluginApiLike, cfg);
+    const store = new TaskStore(storePath);
+    // Declarative config (project types) lives next to the store, hand-editable.
+    const configPath = path.join(path.dirname(storePath), "config.json");
     const ownerSet = (cfg.ownerIds ?? []).map(String);
 
     // Resolve the requesting owner from the tool context; returns undefined for
@@ -77,13 +80,14 @@ export default definePluginEntry({
 
     api.registerTool((ctx: { requesterSenderId?: string }) => {
       const uid = toOwner(ctx);
-      return uid ? createProjectTool({ store, userId: uid }) : null;
+      return uid ? createProjectTool({ store, userId: uid, configPath }) : null;
     });
 
     for (const route of createMiniAppRoutes({
       store,
       ownerIds: cfg.ownerIds,
       basePath: BASE_PATH,
+      configPath,
       getBotToken: () => readBotToken(api),
     })) {
       api.registerHttpRoute(route);

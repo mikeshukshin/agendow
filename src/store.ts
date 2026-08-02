@@ -21,6 +21,7 @@ export interface Project {
   ownerId: string; // Telegram user id, or SHARED
   name: string;
   status: string; // short free-text status line
+  typeId?: string; // optional config-defined project type (drives views)
   params: Record<string, string>; // typed key/value parameters
   sections: Section[]; // "topics": named text blocks
   createdAt: string;
@@ -32,6 +33,7 @@ export type SectionInput = { id?: string; title: string; body?: string };
 export type ProjectPatch = {
   name?: string;
   status?: string;
+  typeId?: string;
   params?: Record<string, string>; // full replace
   sections?: SectionInput[]; // full replace (ids preserved / assigned)
 };
@@ -101,6 +103,7 @@ export class TaskStore {
         ownerId: (p.ownerId as string) || SHARED, // v2 global -> shared
         name: (p.name as string) ?? (p.id as string) ?? "Project",
         status: typeof p.status === "string" ? p.status : "",
+        ...(typeof p.typeId === "string" && p.typeId ? { typeId: p.typeId } : {}),
         params: p.params && typeof p.params === "object" ? (p.params as Record<string, string>) : {},
         sections,
         createdAt: (p.createdAt as string) ?? nowIso(),
@@ -226,6 +229,7 @@ export class TaskStore {
     name: string;
     shared?: boolean;
     status?: string;
+    typeId?: string;
   }): Project & { shared: boolean } {
     const name = (input.name ?? "").trim();
     if (!name) throw new Error("project name required");
@@ -240,6 +244,7 @@ export class TaskStore {
         createdAt: nowIso(),
         updatedAt: nowIso(),
       };
+      if (input.typeId && input.typeId.trim()) project.typeId = input.typeId.trim();
       d.projects.push(project);
       return this.view(project);
     }, true);
@@ -251,6 +256,11 @@ export class TaskStore {
       const patch = input.patch ?? {};
       if (typeof patch.name === "string" && patch.name.trim()) p.name = patch.name.trim();
       if (typeof patch.status === "string") p.status = patch.status.trim();
+      if (typeof patch.typeId === "string") {
+        const t = patch.typeId.trim();
+        if (t) p.typeId = t;
+        else delete p.typeId;
+      }
       if (patch.params && typeof patch.params === "object") p.params = { ...patch.params };
       if (Array.isArray(patch.sections)) {
         p.sections = patch.sections.map((s) => ({

@@ -34,7 +34,14 @@ function mockRes() {
 function setup(ownerIds?: number[]) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agenda-mini-"));
   const store = new TaskStore(path.join(dir, "tasks.json"));
-  const routes = createMiniAppRoutes({ store, ownerIds, basePath: "/plugins/agendow", getBotToken: () => TOKEN });
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    projectTypes: { bot: { label: "Bot", views: [{ kind: "api", title: "Market", request: { url: "https://api.x/{market}" }, render: "{price}$" }] } },
+  }));
+  const routes = createMiniAppRoutes({
+    store, ownerIds, basePath: "/plugins/agendow", configPath,
+    getBotToken: () => TOKEN, fetchJson: async () => ({ price: 7 }),
+  });
   const route = (suffix: string) => routes.find((r) => r.path.endsWith(suffix))!;
   const call = async (suffix: string, method: string, o: { init?: string; body?: unknown } = {}) => {
     const r = route(suffix);
@@ -77,6 +84,18 @@ describe("mini app API", () => {
     const team = await call("/projects", "POST", { init: a, body: { op: "create", name: "Team", shared: true } });
     const bOv2 = await call("/projects", "GET", { init: b });
     expect(bOv2.json.projects.some((p: any) => p.id === team.json.id && p.shared)).toBe(true);
+  });
+
+  it("exposes config types and renders a typed project via api view", async () => {
+    const { call } = setup();
+    const init = initData(7);
+    const ov = await call("/projects", "GET", { init });
+    expect(ov.json.types).toEqual([{ id: "bot", label: "Bot" }]);
+    const p = await call("/projects", "POST", { init, body: { op: "create", name: "Cancore" } });
+    await call("/projects", "POST", { init, body: { op: "update", project: p.json.id, typeId: "bot", params: { market: "42" } } });
+    const r = await call("/projects", "POST", { init, body: { op: "render", project: p.json.id } });
+    expect(r.json.text).toContain("### Market");
+    expect(r.json.text).toContain("7$");
   });
 
   it("serves the Mini App page", async () => {

@@ -8,9 +8,14 @@ import { TaskStore } from "./store.js";
 function setup(userId = "111") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agenda-proj-"));
   const store = new TaskStore(path.join(dir, "tasks.json"));
-  const tool = createProjectTool({ store, userId });
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    projectTypes: { bot: { label: "Bot", views: [{ kind: "api", title: "Market", request: { url: "https://api.x/{market}" }, render: "{price}$" }] } },
+  }));
+  const tool = createProjectTool({ store, userId, configPath, fetchJson: async () => ({ price: 7 }) });
   const run = async (p: Record<string, unknown>) => (await tool.execute("c", p)).details as any;
-  return { store, run };
+  const runFull = async (p: Record<string, unknown>) => await tool.execute("c", p);
+  return { store, run, runFull };
 }
 
 describe("project tool", () => {
@@ -38,6 +43,18 @@ describe("project tool", () => {
     await run({ action: "create", name: "Poly", status: "On hold" });
     const list = await run({ action: "list" });
     expect(list.projects.some((p: any) => p.name === "Poly" && p.status === "On hold")).toBe(true);
+  });
+
+  it("lists config types and renders a typed project via its api view", async () => {
+    const { run, runFull } = setup();
+    expect((await run({ action: "types" })).types).toEqual([{ id: "bot", label: "Bot" }]);
+    await run({ action: "create", name: "Cancore", type: "bot" });
+    await run({ action: "switch", project: "Cancore" });
+    await run({ action: "set_param", key: "market", value: "42" });
+    const res = await runFull({ action: "render" });
+    expect(res.content[0].text).toContain("# Cancore");
+    expect(res.content[0].text).toContain("### Market");
+    expect(res.content[0].text).toContain("7$"); // api view rendered via injected fetch
   });
 
   it("errors on missing fields / unknown targets", async () => {

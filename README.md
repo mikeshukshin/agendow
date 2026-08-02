@@ -33,11 +33,52 @@ Each user has their own projects (+ shared) and their own current project.
 `project` actions:
 
 - `list` — visible projects with status. `get` / `current` — one project in full.
-- `create` — `name` (+ `status`, `shared`). `update` — `name` and/or `status`.
+- `create` — `name` (+ `status`, `type`, `shared`). `update` — `name`, `status` and/or `type`.
 - `set_param` — `key` + `value` (empty value removes).
 - `add_section` — `title` (+ `body`). `update_section` — `section` + `title`/`body`.
   `remove_section` — `section`.
+- `render` — render the project (its type's views, incl. live `api` views) to text.
+- `types` — list config-defined project types.
 - `archive` / `unarchive` / `switch`.
+
+## Project types & views (configurable)
+
+A **project type** (declared in a local config file) gives a project a set of
+**views** — pluggable renderers that turn the project into text. Assign a type
+with `create`/`update` (`type`), then `render` (tool) or the Mini App's ▷ Render
+button assembles the views into text.
+
+Config lives next to the store at `<stateDir>/agendow/config.json`
+(hand-editable; re-read on each render — no restart). See `config.example.json`:
+
+```json
+{
+  "projectTypes": {
+    "polymarket-bot": {
+      "label": "Polymarket Bot",
+      "params": [{ "key": "market", "label": "Market id" }],
+      "views": [
+        { "kind": "text", "title": "Notes", "section": "Notes" },
+        { "kind": "params", "title": "Parameters" },
+        { "kind": "api", "title": "Market",
+          "request": { "url": "https://api.example.com/markets/{market}" },
+          "render": "{question} — {outcomePrices}" }
+      ]
+    }
+  }
+}
+```
+
+Built-in view `kind`s:
+
+- `params` — the project's params as a list.
+- `sections` — all sections as text.
+- `text` — one section's body (`section`) or static `text`.
+- `api` — an HTTP request with `{param}` interpolation into url/headers/body,
+  then the JSON response rendered via a `{dotted.path}` template. (http(s) only,
+  10s timeout, 256 KB cap.)
+
+Custom `kind`s in code (a `ProjectViewKind` interface) are the Phase-3 follow-up.
 
 ## Config
 
@@ -102,12 +143,15 @@ POST https://api.telegram.org/bot<token>/setChatMenuButton
 
 ## Layout
 
-- `src/store.ts` — per-user project store (name/status/params/sections + shared, atomic write, migration).
+- `src/store.ts` — per-user project store (name/status/type/params/sections + shared, atomic write, migration).
 - `src/project-tool.ts` — the `project` agent tool (scoped to the requesting user).
+- `src/config.ts` — load the local `config.json` (project types).
+- `src/views.ts` — the `ProjectViewKind` interface, built-in kinds (params/sections/text/api), and `renderProject`.
 - `src/tool-helpers.ts` — shared tool result/schema helpers.
 - `src/board.ts` — Mini App page + `/projects` JSON API (scoped by the initData user).
 - `src/telegram-auth.ts` — Telegram `initData` HMAC validation.
 - `src/index.ts` — `definePluginEntry`: registers the tool + HTTP routes.
+- `config.example.json` — sample project-types config.
 - `openclaw.plugin.json` — manifest (`contracts.tools: ["project"]`).
 
 ## Security notes
@@ -121,11 +165,8 @@ POST https://api.telegram.org/bot<token>/setChatMenuButton
 
 ## Roadmap
 
-Toward a configurable, extensible workspace (hybrid: declarative config + code):
-
-- **Config-defined project types** (local config) declaring params + views.
-- **View kinds**, incl. an `api` view: a declarative HTTP request (param
-  interpolation) rendered to text via a template. Plus a `render` that assembles
-  a project's views into text.
-- **Code interface** (`ProjectViewKind`) to register custom view kinds for
-  advanced integrations (auth, non-trivial logic).
+- **Phase 3 — custom view kinds in code.** The `ProjectViewKind` interface
+  exists; expose a registration point so other plugins/code can add kinds beyond
+  the built-in `params`/`sections`/`text`/`api` (auth flows, non-trivial logic).
+- Browser (non-Telegram) access via Telegram Login Widget.
+- Render views inline in the Mini App (not just on demand).

@@ -1,12 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { listTypes, loadConfig } from "./config.js";
 import { verifyInitData } from "./telegram-auth.js";
 import type { TaskStore } from "./store.js";
+import { defaultFetchJson, type FetchJson, renderProject } from "./views.js";
 
 export interface MiniAppOptions {
   store: TaskStore;
   getBotToken: () => string | undefined;
   ownerIds?: number[];
   basePath: string;
+  configPath: string;
+  fetchJson?: FetchJson;
 }
 
 export interface MiniAppRoute {
@@ -67,7 +71,9 @@ async function handleProjects(req: IncomingMessage, res: ServerResponse, opts: M
   const method = (req.method ?? "GET").toUpperCase();
   const { store } = opts;
 
-  if (method === "GET") return sendJson(res, 200, store.overview(userId));
+  if (method === "GET") {
+    return sendJson(res, 200, { ...store.overview(userId), types: listTypes(loadConfig(opts.configPath)) });
+  }
   if (method === "POST") {
     let body: Record<string, unknown>;
     try {
@@ -91,11 +97,20 @@ async function handleProjects(req: IncomingMessage, res: ServerResponse, opts: M
             patch: {
               name: str(body.name) || undefined,
               status: typeof body.status === "string" ? str(body.status) : undefined,
+              typeId: typeof body.typeId === "string" ? str(body.typeId) : undefined,
               params: body.params && typeof body.params === "object" && !Array.isArray(body.params)
                 ? (body.params as Record<string, string>) : undefined,
               sections: Array.isArray(body.sections) ? (body.sections as Array<{ id?: string; title: string; body?: string }>) : undefined,
             },
           }));
+        case "render": {
+          const proj = store.getProject(userId, target);
+          if (!proj) return sendJson(res, 400, { error: "no such project" });
+          const cfg = loadConfig(opts.configPath);
+          const type = proj.typeId ? cfg.projectTypes[proj.typeId] : undefined;
+          const text = await renderProject(proj, type, opts.fetchJson ?? defaultFetchJson);
+          return sendJson(res, 200, { text });
+        }
         case "archive":
           if (!target) return sendJson(res, 400, { error: "project required" });
           return sendJson(res, 200, store.archiveProject({ userId, idOrName: target }));
@@ -196,6 +211,8 @@ export function renderMiniAppHtml(base: string): string {
 <main id="main">
   <label>Status</label>
   <input id="status" class="f" placeholder="e.g. Active · Paused — waiting for hardware" />
+  <label>Type</label>
+  <select id="type" class="f"></select>
   <label>Parameters</label>
   <div id="params" style="display:flex; flex-direction:column; gap:6px;"></div>
   <button id="addParam" class="addbtn">＋ parameter</button>
@@ -203,13 +220,16 @@ export function renderMiniAppHtml(base: string): string {
   <div id="sections" style="display:flex; flex-direction:column; gap:8px;"></div>
   <button id="addSection" class="addbtn">＋ section</button>
   <div style="display:flex; gap:10px; align-items:center;"><button id="save">Save</button><span id="savedNote" class="saved"></span></div>
+  <label>Rendered</label>
+  <div style="display:flex; gap:10px; align-items:center;"><button id="renderBtn" class="addbtn">▷ Render</button><span id="renderNote" class="saved"></span></div>
+  <pre id="renderOut" class="f" style="white-space:pre-wrap; display:none; margin:0;"></pre>
 </main>
 <script>
 const CFG = ${cfg};
 const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 const INIT = (tg && tg.initData) || "";
-let PROJECTS = [], CUR = null;
+let PROJECTS = [], CUR = null, TYPES = [];
 const esc = (s) => String(s).replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 async function api(method, body) {
@@ -246,11 +266,16 @@ function sectionCard(s){
 function renderDetail(){
   const p = curProject();
   document.getElementById("status").value = p ? (p.status||"") : "";
+  const ts = document.getElementById("type");
+  ts.innerHTML = '<option value="">(no type)</option>' + TYPES.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.label)+'</option>').join("");
+  ts.value = (p && p.typeId) || "";
   const pc = document.getElementById("params"); pc.innerHTML="";
   if(p) for(const [k,v] of Object.entries(p.params||{})) pc.append(paramRow(k,v));
   const sc = document.getElementById("sections"); sc.innerHTML="";
   if(p) for(const s of (p.sections||[])) sc.append(sectionCard(s));
   document.getElementById("savedNote").textContent="";
+  document.getElementById("renderOut").style.display="none";
+  document.getElementById("renderNote").textContent="";
 }
 function renderSelector(){
   document.getElementById("proj").innerHTML = PROJECTS.map(p =>
@@ -259,7 +284,7 @@ function renderSelector(){
 }
 async function load(){
   try{ showErr("");
-    const ov = await api("GET"); PROJECTS = ov.projects; CUR = ov.activeProjectId;
+    const ov = await api("GET"); PROJECTS = ov.projects; CUR = ov.activeProjectId; TYPES = ov.types || [];
     renderSelector(); renderDetail();
   }catch(e){ showErr(e.message); }
 }
@@ -285,12 +310,22 @@ document.getElementById("save").addEventListener("click", async ()=>{
     const body = card.querySelector("textarea").value;
     if(title) sections.push({ id: card.dataset.id || undefined, title, body });
   }
+  const typeId = document.getElementById("type").value;
   try{
-    const updated = await api("POST",{op:"update",project:CUR,status,params,sections});
+    const updated = await api("POST",{op:"update",project:CUR,status,typeId,params,sections});
     const i = PROJECTS.findIndex(p=>p.id===CUR); if(i>=0) PROJECTS[i]=updated;
     renderSelector(); renderDetail();
     document.getElementById("savedNote").textContent = "Saved ✓";
   }catch(e){ showErr(e.message); }
+});
+
+document.getElementById("renderBtn").addEventListener("click", async ()=>{
+  const out=document.getElementById("renderOut"), note=document.getElementById("renderNote");
+  note.textContent="Rendering…";
+  try{
+    const r = await api("POST",{op:"render",project:CUR});
+    out.textContent = r.text || "(empty)"; out.style.display="block"; note.textContent="";
+  }catch(e){ note.textContent=""; showErr(e.message); }
 });
 
 // name editor (create + rename); shared toggle only for create
