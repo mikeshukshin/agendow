@@ -48,6 +48,10 @@ A **project type** (declared in a local config file) gives a project a set of
 with `create`/`update` (`type`), then `render` (tool) or the Mini App's ▷ Render
 button assembles the views into text.
 
+**Building dashboards from chat:** see [docs/dashboards.md](docs/dashboards.md) —
+define a dashboard type once in `config.json`, then spin up one project per
+subject from chat and `render`.
+
 Config lives next to the store at `<stateDir>/agendow/config.json`
 (hand-editable; re-read on each render — no restart). See `config.example.json`:
 
