@@ -75,6 +75,14 @@ Add a new *kind* of dashboard by adding another type to `config.json`.
 The bot's **Projects** button opens the same data: a **Type** dropdown, param
 and section editors, and a **▷ Render** button that shows the rendered dashboard.
 
+## A type renders only the views it lists
+
+Assigning a type replaces the default view with exactly the views you declared.
+So a type with only a `params` view will **not** show the project's sections —
+add a `sections` view (all sections) or a `text` view (one section) if you want
+them. A project with **no type** renders `params` + all `sections` by default,
+i.e. everything you entered.
+
 ## Note / limitation
 
 The dashboard *template* (a type and its API views) lives in `config.json`, not
