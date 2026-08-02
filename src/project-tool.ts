@@ -24,7 +24,9 @@ export const ProjectParamsSchema = Type.Object({
   includeArchived: Type.Optional(Type.Boolean()),
 });
 
-const DESCRIPTION = `Manage the current user's projects. A project is a workspace: a name, a short "status", typed "params" (key/value), "sections" (named text blocks), and an optional config-defined "type" that drives its views. Private per user unless created "shared".
+const DESCRIPTION = `The current user's projects/dashboards. ALWAYS use this tool for any request about their projects, dashboards, params, sections, or status — inspect and change them here; never answer such questions from memory. A project is a workspace: a name, a short "status", typed "params" (key/value), "sections" (named text blocks), and an optional config-defined "type" that drives its rendered views. Private per user unless created "shared".
+
+Selecting a project: if the user names one, pass it as "project" (name or id); otherwise act on the current project. Use "switch" to change the current project so later messages need no name.
 
 ACTIONS (set "action"):
 - list: visible projects with status. get / current: one project in full (status, type, params, sections).
@@ -32,7 +34,7 @@ ACTIONS (set "action"):
 - update: change "name", "status" and/or "type". Optional "project".
 - set_param: "key" + "value" (empty removes). add_section: "title" (+ "body").
   update_section: "section" + "title"/"body". remove_section: "section".
-- render: render the project (its type's views, incl. api views) to text. Optional "project". Use to fetch/show a project's live API-backed views.
+- render: assemble the project (its type's views, incl. live api views) into a text dashboard. Optional "project". Use whenever the user asks to see/show/build a project or dashboard.
 - types: list available config-defined project types.
 - archive / unarchive / switch.`;
 
