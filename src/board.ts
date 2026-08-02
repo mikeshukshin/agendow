@@ -150,7 +150,7 @@ export function createMiniAppRoutes(opts: MiniAppOptions): MiniAppRoute[] {
   ];
 }
 
-// Self-contained Telegram Mini App: project switcher + status + params + sections editor.
+// Self-contained Telegram Mini App: render-first dashboard; editor (status/type/params/sections) behind ✎.
 export function renderMiniAppHtml(base: string): string {
   const cfg = JSON.stringify({ projectsPath: `${base}/projects` });
   return `<!doctype html>
@@ -167,29 +167,32 @@ export function renderMiniAppHtml(base: string): string {
     --accent: var(--tg-theme-button-color,#4c8bf5); --accent-fg: var(--tg-theme-button-text-color,#fff);
     --line: rgba(128,138,160,.25); }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system,system-ui,Segoe UI,Roboto,sans-serif; }
-  header { padding:12px 14px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
-  .bar { display:flex; gap:8px; align-items:center; }
-  select#proj { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:9px 10px; font:inherit; }
-  header button { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:9px 12px; font:inherit; cursor:pointer; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system,system-ui,Segoe UI,Roboto,sans-serif; }
+  header { padding:8px 10px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
+  .bar { display:flex; gap:6px; align-items:center; }
+  select#proj { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:9px; padding:7px 9px; font:inherit; }
+  header button { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:9px; padding:7px 11px; font:inherit; cursor:pointer; }
   header button.on { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); }
-  .editor { display:none; gap:8px; margin-top:8px; }
+  .editor { display:none; gap:6px; margin-top:6px; }
   .editor.on { display:flex; }
-  .editor input { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:9px 10px; font:inherit; }
+  .editor input { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:9px; padding:7px 9px; font:inherit; }
   .editor button#editorSave { background:var(--accent); color:var(--accent-fg); border:0; }
-  main { padding:14px; display:flex; flex-direction:column; gap:8px; }
-  label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; margin-top:8px; }
-  input.f, textarea.f { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font:inherit; width:100%; }
-  textarea.f { min-height:90px; resize:vertical; }
+  main { padding:10px 12px; }
+  /* render-first view: dense monospace so tables/lists fit */
+  #renderOut { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--fg); }
+  #form { display:flex; flex-direction:column; gap:6px; }
+  label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; margin-top:6px; }
+  input.f, textarea.f, select.f { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:9px; padding:8px 10px; font:inherit; width:100%; }
+  textarea.f { min-height:80px; resize:vertical; }
   .prow { display:flex; gap:6px; }
   .prow input.k { flex:0 0 38%; }
-  .sec { border:1px solid var(--line); border-radius:12px; padding:10px; display:flex; flex-direction:column; gap:6px; background:var(--card); }
+  .sec { border:1px solid var(--line); border-radius:11px; padding:9px; display:flex; flex-direction:column; gap:6px; background:var(--card); }
   .sec .top { display:flex; gap:6px; align-items:center; }
-  .addbtn { align-self:flex-start; background:transparent; color:var(--accent); border:1px dashed var(--line); border-radius:10px; padding:7px 12px; font:inherit; cursor:pointer; }
+  .addbtn { align-self:flex-start; background:transparent; color:var(--accent); border:1px dashed var(--line); border-radius:9px; padding:6px 11px; font:inherit; cursor:pointer; }
   .x { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:8px; padding:6px 10px; cursor:pointer; }
-  #save { align-self:flex-start; margin-top:12px; background:var(--accent); color:var(--accent-fg); border:0; border-radius:10px; padding:11px 22px; font:inherit; font-weight:600; cursor:pointer; }
-  .saved { color:var(--muted); font-size:12px; }
-  .err { color:#f85149; padding:10px 14px; font-size:13px; }
+  .formactions { display:flex; gap:8px; align-items:center; margin-top:10px; }
+  #save { background:var(--accent); color:var(--accent-fg); border:0; border-radius:9px; padding:9px 20px; font:inherit; font-weight:600; cursor:pointer; }
+  .err { color:#f85149; padding:8px 12px; font-size:13px; }
   .empty { color:var(--muted); text-align:center; padding:40px 0; }
 </style>
 </head>
@@ -198,10 +201,10 @@ export function renderMiniAppHtml(base: string): string {
   <div class="bar">
     <select id="proj"></select>
     <button id="new" title="New project">＋</button>
-    <button id="edit" title="Rename (double-tap: archive)">⋯</button>
+    <button id="editToggle" title="Edit">✎</button>
   </div>
   <div class="editor" id="editor">
-    <input id="editorInput" />
+    <input id="editorInput" placeholder="New project name…" />
     <button id="sharedToggle" title="Shared project">👥</button>
     <button id="editorSave">Save</button>
     <button id="editorCancel">✕</button>
@@ -209,27 +212,30 @@ export function renderMiniAppHtml(base: string): string {
 </header>
 <div id="err" class="err" hidden></div>
 <main id="main">
-  <label>Status</label>
-  <input id="status" class="f" placeholder="e.g. Active · Paused — waiting for hardware" />
-  <label>Type</label>
-  <select id="type" class="f"></select>
-  <label>Parameters</label>
-  <div id="params" style="display:flex; flex-direction:column; gap:6px;"></div>
-  <button id="addParam" class="addbtn">＋ parameter</button>
-  <label>Sections</label>
-  <div id="sections" style="display:flex; flex-direction:column; gap:8px;"></div>
-  <button id="addSection" class="addbtn">＋ section</button>
-  <div style="display:flex; gap:10px; align-items:center;"><button id="save">Save</button><span id="savedNote" class="saved"></span></div>
-  <label>Rendered</label>
-  <div style="display:flex; gap:10px; align-items:center;"><button id="renderBtn" class="addbtn">▷ Render</button><span id="renderNote" class="saved"></span></div>
-  <pre id="renderOut" class="f" style="white-space:pre-wrap; display:none; margin:0;"></pre>
+  <pre id="renderOut"></pre>
+  <div id="form" hidden>
+    <label>Name</label>
+    <input id="name" class="f" placeholder="Project name" />
+    <label>Status</label>
+    <input id="status" class="f" placeholder="e.g. Active · Paused — waiting for hardware" />
+    <label>Type</label>
+    <select id="type" class="f"></select>
+    <label>Parameters</label>
+    <div id="params" style="display:flex; flex-direction:column; gap:6px;"></div>
+    <button id="addParam" class="addbtn">＋ parameter</button>
+    <label>Sections</label>
+    <div id="sections" style="display:flex; flex-direction:column; gap:8px;"></div>
+    <button id="addSection" class="addbtn">＋ section</button>
+    <div class="formactions"><button id="save">Save</button><button id="archiveBtn" class="x">Archive</button></div>
+  </div>
 </main>
 <script>
 const CFG = ${cfg};
 const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 const INIT = (tg && tg.initData) || "";
-let PROJECTS = [], CUR = null, TYPES = [];
+let PROJECTS = [], CUR = null, TYPES = [], MODE = "view";
+const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 async function api(method, body) {
@@ -242,7 +248,7 @@ async function api(method, body) {
   if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
   return data;
 }
-function showErr(m){ const e=document.getElementById("err"); if(!m){e.hidden=true;return;} e.textContent=m; e.hidden=false; }
+function showErr(m){ const e=$("err"); if(!m){e.hidden=true;return;} e.textContent=m; e.hidden=false; }
 function confirmAsync(msg){ return new Promise((r)=>{ if(tg&&tg.showConfirm) tg.showConfirm(msg,r); else r(window.confirm(msg)); }); }
 function curProject(){ return PROJECTS.find(p => p.id === CUR); }
 
@@ -263,41 +269,58 @@ function sectionCard(s){
   const bi = el("textarea","f",{value:(s&&s.body)||"", placeholder:"Text… (markdown)"});
   card.append(top, bi); return card;
 }
-function renderDetail(){
-  const p = curProject();
-  document.getElementById("status").value = p ? (p.status||"") : "";
-  const ts = document.getElementById("type");
-  ts.innerHTML = '<option value="">(no type)</option>' + TYPES.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.label)+'</option>').join("");
-  ts.value = (p && p.typeId) || "";
-  const pc = document.getElementById("params"); pc.innerHTML="";
-  if(p) for(const [k,v] of Object.entries(p.params||{})) pc.append(paramRow(k,v));
-  const sc = document.getElementById("sections"); sc.innerHTML="";
-  if(p) for(const s of (p.sections||[])) sc.append(sectionCard(s));
-  document.getElementById("savedNote").textContent="";
-  document.getElementById("renderOut").style.display="none";
-  document.getElementById("renderNote").textContent="";
-}
 function renderSelector(){
-  document.getElementById("proj").innerHTML = PROJECTS.map(p =>
+  $("proj").innerHTML = PROJECTS.map(p =>
     '<option value="'+esc(p.id)+'"'+(p.id===CUR?" selected":"")+'>'+(p.shared?"👥 ":"")+esc(p.name)+(p.status?" · "+esc(p.status):"")+'</option>'
   ).join("");
 }
+function fillForm(){
+  const p = curProject();
+  $("name").value = p ? (p.name||"") : "";
+  $("status").value = p ? (p.status||"") : "";
+  const ts = $("type");
+  ts.innerHTML = '<option value="">(no type)</option>' + TYPES.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.label)+'</option>').join("");
+  ts.value = (p && p.typeId) || "";
+  const pc = $("params"); pc.innerHTML="";
+  if(p) for(const [k,v] of Object.entries(p.params||{})) pc.append(paramRow(k,v));
+  const sc = $("sections"); sc.innerHTML="";
+  if(p) for(const s of (p.sections||[])) sc.append(sectionCard(s));
+}
+async function doRender(){
+  const out = $("renderOut");
+  if(!curProject()){ out.textContent="No project yet — tap ＋ to create one."; return; }
+  out.textContent="…";
+  try{
+    const r = await api("POST",{op:"render",project:CUR});
+    out.textContent = (r.text && r.text.trim()) ? r.text : "Nothing to render yet — tap ✎ to add a type or sections.";
+  }catch(e){ out.textContent=""; showErr(e.message); }
+}
+function applyMode(){
+  const editing = MODE==="edit";
+  $("form").hidden = !editing;
+  $("renderOut").hidden = editing;
+  $("editToggle").classList.toggle("on", editing);
+  if(editing) fillForm(); else doRender();
+}
+function setMode(m){ MODE=m; showErr(""); applyMode(); }
 async function load(){
   try{ showErr("");
     const ov = await api("GET"); PROJECTS = ov.projects; CUR = ov.activeProjectId; TYPES = ov.types || [];
-    renderSelector(); renderDetail();
+    renderSelector(); applyMode();
   }catch(e){ showErr(e.message); }
 }
 
-document.getElementById("proj").addEventListener("change", async (e)=>{
-  CUR = e.target.value; renderDetail();
+$("proj").addEventListener("change", async (e)=>{
+  CUR = e.target.value; applyMode();
   try{ await api("POST",{op:"switch",project:CUR}); }catch(err){ showErr(err.message); }
 });
-document.getElementById("addParam").addEventListener("click", ()=>document.getElementById("params").append(paramRow("","")));
-document.getElementById("addSection").addEventListener("click", ()=>document.getElementById("sections").append(sectionCard(null)));
+$("editToggle").addEventListener("click", ()=> setMode(MODE==="edit"?"view":"edit"));
+$("addParam").addEventListener("click", ()=>$("params").append(paramRow("","")));
+$("addSection").addEventListener("click", ()=>$("sections").append(sectionCard(null)));
 
-document.getElementById("save").addEventListener("click", async ()=>{
-  const status = document.getElementById("status").value;
+$("save").addEventListener("click", async ()=>{
+  const name = $("name").value.trim();
+  const status = $("status").value;
   const params = {};
   for(const row of document.querySelectorAll("#params .prow")){
     const k = row.querySelector("input.k").value.trim();
@@ -310,59 +333,42 @@ document.getElementById("save").addEventListener("click", async ()=>{
     const body = card.querySelector("textarea").value;
     if(title) sections.push({ id: card.dataset.id || undefined, title, body });
   }
-  const typeId = document.getElementById("type").value;
+  const typeId = $("type").value;
   try{
-    const updated = await api("POST",{op:"update",project:CUR,status,typeId,params,sections});
+    const updated = await api("POST",{op:"update",project:CUR,name:name||undefined,status,typeId,params,sections});
     const i = PROJECTS.findIndex(p=>p.id===CUR); if(i>=0) PROJECTS[i]=updated;
-    renderSelector(); renderDetail();
-    document.getElementById("savedNote").textContent = "Saved ✓";
+    renderSelector(); setMode("view"); // back to the fresh render
   }catch(e){ showErr(e.message); }
 });
-
-document.getElementById("renderBtn").addEventListener("click", async ()=>{
-  const out=document.getElementById("renderOut"), note=document.getElementById("renderNote");
-  note.textContent="Rendering…";
-  try{
-    const r = await api("POST",{op:"render",project:CUR});
-    out.textContent = r.text || "(empty)"; out.style.display="block"; note.textContent="";
-  }catch(e){ note.textContent=""; showErr(e.message); }
-});
-
-// name editor (create + rename); shared toggle only for create
-let editorMode=null, sharedMode=false;
-function setShared(on){ sharedMode=on; document.getElementById("sharedToggle").classList.toggle("on",on); }
-function openEditor(mode, value){
-  editorMode=mode; setShared(false);
-  document.getElementById("sharedToggle").style.display = mode==="create" ? "" : "none";
-  const inp=document.getElementById("editorInput");
-  inp.value=value||""; inp.placeholder = mode==="create"?"New project name…":"Rename project…";
-  document.getElementById("editor").classList.add("on"); inp.focus();
-}
-function closeEditor(){ editorMode=null; document.getElementById("editor").classList.remove("on"); }
-document.getElementById("new").addEventListener("click", ()=>openEditor("create",""));
-document.getElementById("edit").addEventListener("click", ()=>{ const p=curProject(); openEditor("rename", p?p.name:""); });
-document.getElementById("sharedToggle").addEventListener("click", ()=>setShared(!sharedMode));
-document.getElementById("editorCancel").addEventListener("click", closeEditor);
-document.getElementById("editorSave").addEventListener("click", saveEditor);
-document.getElementById("editorInput").addEventListener("keydown",(e)=>{ if(e.key==="Enter") saveEditor(); if(e.key==="Escape") closeEditor(); });
-async function saveEditor(){
-  const name=document.getElementById("editorInput").value.trim(); if(!name) return;
-  try{
-    if(editorMode==="create"){ const p=await api("POST",{op:"create",name,shared:sharedMode}); await api("POST",{op:"switch",project:p.id}); }
-    else { await api("POST",{op:"update",project:CUR,name}); }
-    closeEditor(); await load();
-  }catch(e){ showErr(e.message); }
-}
-document.getElementById("edit").addEventListener("dblclick", async ()=>{
+$("archiveBtn").addEventListener("click", async ()=>{
   if(await confirmAsync("Archive this project? It is kept but hidden.")){
-    try{ await api("POST",{op:"archive",project:CUR}); await load(); }catch(e){ showErr(e.message); }
+    try{ await api("POST",{op:"archive",project:CUR}); MODE="view"; await load(); }catch(e){ showErr(e.message); }
   }
 });
+
+// create (new project) via the inline name bar
+let sharedMode=false;
+function setShared(on){ sharedMode=on; $("sharedToggle").classList.toggle("on",on); }
+function openCreate(){ setShared(false); const inp=$("editorInput"); inp.value=""; $("editor").classList.add("on"); inp.focus(); }
+function closeCreate(){ $("editor").classList.remove("on"); }
+$("new").addEventListener("click", openCreate);
+$("sharedToggle").addEventListener("click", ()=>setShared(!sharedMode));
+$("editorCancel").addEventListener("click", closeCreate);
+$("editorSave").addEventListener("click", saveCreate);
+$("editorInput").addEventListener("keydown",(e)=>{ if(e.key==="Enter") saveCreate(); if(e.key==="Escape") closeCreate(); });
+async function saveCreate(){
+  const name=$("editorInput").value.trim(); if(!name) return;
+  try{
+    const p=await api("POST",{op:"create",name,shared:sharedMode});
+    await api("POST",{op:"switch",project:p.id});
+    closeCreate(); MODE="edit"; await load(); // new project opens in the editor
+  }catch(e){ showErr(e.message); }
+}
 
 function showNoTelegram(){
   const plat = tg ? (tg.platform+" "+tg.version) : "no Telegram SDK";
   document.querySelector("header").style.display="none";
-  document.getElementById("main").innerHTML =
+  $("main").innerHTML =
     '<div class="empty">Open this from the <b>Projects</b> button in @clawmerqbot.<br>'+
     'A Mini App only receives your Telegram identity when launched from inside Telegram.'+
     '<br><br><small>Telegram: '+esc(plat)+' · initData: empty</small></div>';
