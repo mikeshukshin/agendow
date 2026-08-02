@@ -1,8 +1,8 @@
 {
   "id": "agendow",
   "name": "Agendow",
-  "description": "Per-user project workspaces (status, params, sections, configurable views) for OpenClaw, with a Telegram Mini App.",
-  "version": "0.6.0",
+  "description": "Per-user project workspaces (status, params, sections, configurable + extensible views) for OpenClaw, with a Telegram Mini App.",
+  "version": "0.7.0",
   "configSchema": {
     "type": "object",
     "properties": {

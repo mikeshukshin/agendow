@@ -97,12 +97,19 @@ const apiKind: ProjectViewKind = {
   },
 };
 
-const BUILTIN: Record<string, ProjectViewKind> = {
-  params: paramsKind,
-  sections: sectionsKind,
-  text: textKind,
-  api: apiKind,
-};
+// Registry of view kinds. Built-ins are registered below; register custom kinds
+// with registerViewKind (see src/kinds/index.ts) — global so a code file can add
+// a kind at import time and have it available to every render.
+const REGISTRY = new Map<string, ProjectViewKind>();
+
+export function registerViewKind(kind: ProjectViewKind): void {
+  REGISTRY.set(kind.kind, kind);
+}
+export function listRegisteredKinds(): string[] {
+  return [...REGISTRY.keys()].sort();
+}
+
+for (const k of [paramsKind, sectionsKind, textKind, apiKind]) registerViewKind(k);
 
 const DEFAULT_VIEWS: ViewConfig[] = [
   { kind: "params", title: "Parameters" },
@@ -119,7 +126,7 @@ export async function renderProject(
   const head = `# ${project.name}${project.status ? ` — ${project.status}` : ""}`;
   const blocks: string[] = [head];
   for (const view of views) {
-    const kind = BUILTIN[view.kind];
+    const kind = REGISTRY.get(view.kind);
     const title = view.title ? `### ${view.title}\n` : "";
     if (!kind) {
       blocks.push(`${title}(unknown view kind: ${view.kind})`);

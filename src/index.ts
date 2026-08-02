@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createMiniAppRoutes } from "./board.js";
+import "./kinds/index.js"; // side-effect: register custom view kinds
 import { createProjectTool } from "./project-tool.js";
 import { TaskStore } from "./store.js";
 

@@ -78,7 +78,27 @@ Built-in view `kind`s:
   then the JSON response rendered via a `{dotted.path}` template. (http(s) only,
   10s timeout, 256 KB cap.)
 
-Custom `kind`s in code (a `ProjectViewKind` interface) are the Phase-3 follow-up.
+### Custom view kinds (code)
+
+For cases the built-in kinds can't express (auth flows, multi-request
+orchestration, non-HTTP sources), implement the `ProjectViewKind` interface and
+register it — it then becomes usable as a `kind` in config:
+
+```ts
+// src/kinds/index.ts (imported for side effects at plugin load)
+import { registerViewKind } from "../views.js";
+
+registerViewKind({
+  kind: "hello",
+  async render({ project, view, fetchJson }) {
+    // project.params / project.sections; view.* config; fetchJson() helper.
+    return `Hello, ${project.name}!`;
+  },
+});
+```
+
+The `project` tool's `types` action lists the registered `kinds` (built-in +
+custom) so config authors know what's available.
 
 ## Config
 
@@ -146,7 +166,8 @@ POST https://api.telegram.org/bot<token>/setChatMenuButton
 - `src/store.ts` — per-user project store (name/status/type/params/sections + shared, atomic write, migration).
 - `src/project-tool.ts` — the `project` agent tool (scoped to the requesting user).
 - `src/config.ts` — load the local `config.json` (project types).
-- `src/views.ts` — the `ProjectViewKind` interface, built-in kinds (params/sections/text/api), and `renderProject`.
+- `src/views.ts` — the `ProjectViewKind` interface, the kind registry (`registerViewKind`), built-in kinds (params/sections/text/api), and `renderProject`.
+- `src/kinds/index.ts` — where custom view kinds are registered (empty by default).
 - `src/tool-helpers.ts` — shared tool result/schema helpers.
 - `src/board.ts` — Mini App page + `/projects` JSON API (scoped by the initData user).
 - `src/telegram-auth.ts` — Telegram `initData` HMAC validation.
@@ -165,8 +186,6 @@ POST https://api.telegram.org/bot<token>/setChatMenuButton
 
 ## Roadmap
 
-- **Phase 3 — custom view kinds in code.** The `ProjectViewKind` interface
-  exists; expose a registration point so other plugins/code can add kinds beyond
-  the built-in `params`/`sections`/`text`/`api` (auth flows, non-trivial logic).
 - Browser (non-Telegram) access via Telegram Login Widget.
 - Render views inline in the Mini App (not just on demand).
+- Load custom kinds from an external directory (today they live in `src/kinds`).

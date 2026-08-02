@@ -47,7 +47,9 @@ describe("project tool", () => {
 
   it("lists config types and renders a typed project via its api view", async () => {
     const { run, runFull } = setup();
-    expect((await run({ action: "types" })).types).toEqual([{ id: "bot", label: "Bot" }]);
+    const t = await run({ action: "types" });
+    expect(t.types).toEqual([{ id: "bot", label: "Bot" }]);
+    expect(t.kinds).toEqual(expect.arrayContaining(["api", "params", "sections", "text"]));
     await run({ action: "create", name: "Cancore", type: "bot" });
     await run({ action: "switch", project: "Cancore" });
     await run({ action: "set_param", key: "market", value: "42" });

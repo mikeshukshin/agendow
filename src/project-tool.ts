@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { listTypes, loadConfig } from "./config.js";
 import { type AgentTool, jsonResult, literalEnum, str } from "./tool-helpers.js";
 import { TaskStore } from "./store.js";
-import { defaultFetchJson, type FetchJson, renderProject } from "./views.js";
+import { defaultFetchJson, type FetchJson, listRegisteredKinds, renderProject } from "./views.js";
 
 const ACTIONS = [
   "list", "get", "create", "update", "archive", "unarchive", "switch", "current",
@@ -117,7 +117,7 @@ export function createProjectTool(opts: {
             return { content: [{ type: "text", text }], details: { project: proj.id, text } };
           }
           case "types":
-            return jsonResult({ types: listTypes(loadConfig(configPath)) });
+            return jsonResult({ types: listTypes(loadConfig(configPath)), kinds: listRegisteredKinds() });
           case "archive":
             if (!project) throw new Error("project required for archive");
             return jsonResult(store.archiveProject({ userId, idOrName: project }));

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { listTypes, loadConfig } from "./config.js";
-import { interpolate, renderProject, renderTemplate } from "./views.js";
+import { interpolate, listRegisteredKinds, registerViewKind, renderProject, renderTemplate } from "./views.js";
 
 const proj = {
   id: "p", ownerId: "1", name: "Cancore", status: "Active", typeId: "t",
@@ -46,6 +46,17 @@ describe("renderProject", () => {
     const text = await renderProject(proj, type, async () => { throw new Error("boom"); });
     expect(text).toContain("unknown view kind: nope");
     expect(text).toContain("error: boom");
+  });
+});
+
+describe("custom view kinds (Phase 3)", () => {
+  it("registers a custom kind and uses it in render", async () => {
+    registerViewKind({ kind: "test-echo", async render({ view }) { return `echo:${view.text ?? ""}`; } });
+    expect(listRegisteredKinds()).toEqual(expect.arrayContaining(["params", "sections", "text", "api", "test-echo"]));
+    const type = { views: [{ kind: "test-echo", title: "E", text: "hi" }] };
+    const text = await renderProject(proj, type, async () => ({}));
+    expect(text).toContain("### E");
+    expect(text).toContain("echo:hi");
   });
 });
 
