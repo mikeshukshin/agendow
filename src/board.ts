@@ -181,6 +181,7 @@ export function renderMiniAppHtml(base: string): string {
   /* render-first view: dense monospace so tables/lists fit */
   #renderOut { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--fg); }
   #form { display:flex; flex-direction:column; gap:6px; }
+  #form[hidden] { display:none; } /* id rule above beats UA [hidden]; restore it explicitly */
   label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; margin-top:6px; }
   input.f, textarea.f, select.f { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:9px; padding:8px 10px; font:inherit; width:100%; }
   textarea.f { min-height:80px; resize:vertical; }
