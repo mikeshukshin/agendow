@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { listTypes, loadConfig } from "./config.js";
+import { listTypes, loadConfig, resolveVars } from "./config.js";
 import { verifyInitData } from "./telegram-auth.js";
 import type { TaskStore } from "./store.js";
 import { defaultFetchJson, type FetchJson, renderProject } from "./views.js";
@@ -108,7 +108,7 @@ async function handleProjects(req: IncomingMessage, res: ServerResponse, opts: M
           if (!proj) return sendJson(res, 400, { error: "no such project" });
           const cfg = loadConfig(opts.configPath);
           const type = proj.typeId ? cfg.projectTypes[proj.typeId] : undefined;
-          const text = await renderProject(proj, type, opts.fetchJson ?? defaultFetchJson);
+          const text = await renderProject(proj, type, opts.fetchJson ?? defaultFetchJson, resolveVars(cfg.vars));
           return sendJson(res, 200, { text });
         }
         case "archive":
@@ -160,6 +160,8 @@ export function renderMiniAppHtml(base: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Agendow</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <style>
   :root { color-scheme: light dark;
     --bg: var(--tg-theme-bg-color,#0f1115); --card: var(--tg-theme-secondary-bg-color,#181b22);
@@ -178,8 +180,26 @@ export function renderMiniAppHtml(base: string): string {
   .editor input { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:9px; padding:7px 9px; font:inherit; }
   .editor button#editorSave { background:var(--accent); color:var(--accent-fg); border:0; }
   main { padding:10px 12px; }
-  /* render-first view: dense monospace so tables/lists fit */
-  #renderOut { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--fg); }
+  /* render-first view: the project's markdown rendered to real HTML */
+  .md { font-size:13.5px; line-height:1.5; overflow-wrap:anywhere; }
+  .md > :first-child { margin-top:0; }
+  .md h1 { font-size:16px; margin:0 0 8px; }
+  .md h2 { font-size:14px; margin:14px 0 6px; }
+  .md h3 { font-size:13px; margin:14px 0 6px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+  .md h4 { font-size:13.5px; margin:10px 0 4px; }
+  .md p { margin:6px 0; }
+  .md ul, .md ol { margin:6px 0; padding-left:20px; }
+  .md li { margin:2px 0; }
+  .md a { color:var(--accent); }
+  .md hr { border:0; border-top:1px solid var(--line); margin:12px 0; }
+  .md code { background:var(--card); padding:1px 5px; border-radius:5px; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .md pre { background:var(--card); padding:10px; border-radius:10px; overflow-x:auto; }
+  .md pre code { background:none; padding:0; }
+  /* tables scroll horizontally inside the card, columns stay aligned */
+  .md table { border-collapse:collapse; font-size:12.5px; display:block; overflow-x:auto; max-width:100%; }
+  .md th, .md td { border:1px solid var(--line); padding:5px 8px; text-align:left; white-space:nowrap; }
+  .md th { background:var(--card); }
+  .md blockquote { margin:6px 0; padding-left:10px; border-left:3px solid var(--line); color:var(--muted); }
   #form { display:flex; flex-direction:column; gap:6px; }
   #form[hidden] { display:none; } /* id rule above beats UA [hidden]; restore it explicitly */
   label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; margin-top:6px; }
@@ -213,7 +233,7 @@ export function renderMiniAppHtml(base: string): string {
 </header>
 <div id="err" class="err" hidden></div>
 <main id="main">
-  <pre id="renderOut"></pre>
+  <div id="renderOut" class="md"></div>
   <div id="form" hidden>
     <label>Name</label>
     <input id="name" class="f" placeholder="Project name" />
@@ -287,13 +307,19 @@ function fillForm(){
   const sc = $("sections"); sc.innerHTML="";
   if(p) for(const s of (p.sections||[])) sc.append(sectionCard(s));
 }
+// Render markdown to sanitized HTML; fall back to escaped text if the CDN libs didn't load.
+function toHtml(md){
+  if(window.marked && window.DOMPurify) return window.DOMPurify.sanitize(window.marked.parse(md));
+  return "<pre style='white-space:pre-wrap'>"+esc(md)+"</pre>";
+}
 async function doRender(){
   const out = $("renderOut");
   if(!curProject()){ out.textContent="No project yet — tap ＋ to create one."; return; }
   out.textContent="…";
   try{
     const r = await api("POST",{op:"render",project:CUR});
-    out.textContent = (r.text && r.text.trim()) ? r.text : "Nothing to render yet — tap ✎ to add a type or sections.";
+    if(r.text && r.text.trim()) out.innerHTML = toHtml(r.text);
+    else out.textContent = "Nothing to render yet — tap ✎ to add a type or sections.";
   }catch(e){ out.textContent=""; showErr(e.message); }
 }
 function applyMode(){
